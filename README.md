@@ -172,6 +172,12 @@ journalctl --user -u claude-agent@my-agent -f
 
 # Status of all agents
 systemctl --user status 'claude-agent@*'
+
+# Send a command to a running agent (without attaching)
+tmux send-keys -t claude-my-agent '/some-command' Enter
+
+# Read an agent's recent output (without attaching)
+tmux capture-pane -t claude-my-agent -p | tail -20
 ```
 
 ## macOS (launchd) — UNTESTED
