@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
-# claude-tmux-launch — launcher for persistent Claude agent systemd services.
+# claude-tmux-launch — launcher for persistent Claude agent services.
 #
 # Starts claude inside a detached tmux session (a real virtual PTY), which
 # keeps the MCP Telegram plugin connection alive for multi-turn conversations.
-# Loops until the tmux session ends so systemd can track liveness and apply
-# Restart=always when Claude exits.
+# Loops until the tmux session ends so the service manager (systemd/launchd)
+# can track liveness and restart on exit.
 #
 # Usage: claude-tmux-launch <agent-name>
-# Called by: claude-agent@.service as ExecStart=claude-tmux-launch %i
 #
-# Expected env vars (set by the systemd unit):
+# Expected env vars:
 #   TELEGRAM_STATE_DIR   — per-agent state dir (~/.claude/channels/telegram-<name>)
-#   TELEGRAM_BOT_TOKEN   — bot token (loaded from EnvironmentFile)
+#   TELEGRAM_BOT_TOKEN   — bot token (auto-sourced from STATE_DIR/.env if not set)
 #   PATH                 — must include bun and claude
 
 set -euo pipefail
@@ -19,12 +18,21 @@ set -euo pipefail
 AGENT="${1:?agent name required}"
 SESSION="claude-${AGENT}"
 
-# Verify required env vars are set (these come from the systemd unit).
+# Source .env from the state dir if TELEGRAM_BOT_TOKEN isn't already set.
+# systemd uses EnvironmentFile for this; launchd doesn't have an equivalent.
+if [[ -z "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_STATE_DIR:-}" && -f "${TELEGRAM_STATE_DIR}/.env" ]]; then
+  set -a
+  source "${TELEGRAM_STATE_DIR}/.env"
+  set +a
+fi
+
+# Verify required env vars are set.
 for var in TELEGRAM_STATE_DIR TELEGRAM_BOT_TOKEN; do
   if [[ -z "${!var:-}" ]]; then
     echo "Error: ${var} is not set." >&2
     echo "  If running manually: export ${var}=... before launching." >&2
     echo "  If running via systemd: check the unit's Environment/EnvironmentFile." >&2
+    echo "  If running via launchd: check EnvironmentVariables in the plist." >&2
     exit 1
   fi
 done

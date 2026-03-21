@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.claude.agent.plist — launchd template for persistent Claude agents on macOS.
+
+  UNTESTED — this is a best-effort port from the tested Linux/systemd setup.
+  Please report issues at the repo.
+
+  To use:
+    1. Copy this file to ~/Library/LaunchAgents/com.claude.agent.<name>.plist
+    2. Replace every AGENT_NAME with your agent name
+    3. Replace every USERNAME with your macOS username
+    4. Adjust PATH to include your bun and claude install locations
+    5. Load: launchctl load ~/Library/LaunchAgents/com.claude.agent.<name>.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.claude.agent.AGENT_NAME</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/USERNAME/bin/claude-tmux-launch</string>
+        <string>AGENT_NAME</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/USERNAME/agents/AGENT_NAME</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>TELEGRAM_STATE_DIR</key>
+        <string>/Users/USERNAME/.claude/channels/telegram-AGENT_NAME</string>
+        <key>PATH</key>
+        <string>/Users/USERNAME/.bun/bin:/Users/USERNAME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Restart on exit (equivalent to systemd Restart=always). -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Start when the plist is loaded (equivalent to systemd enable + start). -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Wait 10 seconds before restarting (equivalent to systemd RestartSec=10). -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/claude-agent-AGENT_NAME.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/claude-agent-AGENT_NAME.log</string>
+</dict>
+</plist>

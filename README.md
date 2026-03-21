@@ -27,13 +27,13 @@ The official plugin's state directory is hardcoded to `~/.claude/channels/telegr
 
 ## The Solution
 
-**tmux** provides a real virtual terminal (PTY) without a physical display. Running Claude inside a tmux session keeps the MCP plugin alive for multi-turn conversations. **systemd** manages lifecycle — starts on boot, restarts on failure.
+**tmux** provides a real virtual terminal (PTY) without a physical display. Running Claude inside a tmux session keeps the MCP plugin alive for multi-turn conversations. A service manager (**systemd** on Linux, **launchd** on macOS) handles lifecycle — starting on boot and restarting on failure.
 
 For multi-agent use, a one-line patch to the cached plugin adds `TELEGRAM_STATE_DIR` env var support, letting each agent point to its own state directory and bot token.
 
 ```
-systemd
-  └── claude-tmux-launch <agent>           # launcher: keeps systemd tracking liveness
+systemd / launchd
+  └── claude-tmux-launch <agent>           # launcher: keeps service manager tracking liveness
         └── tmux new-session -d -s claude-<agent>
               └── claude --channels plugin:telegram@claude-plugins-official
                     └── bun server.ts      # official Claude Code Telegram plugin
@@ -44,7 +44,8 @@ systemd
 | File | Purpose |
 |------|---------|
 | `claude-tmux-launch` | Launcher: starts claude in a named tmux session, loops until it exits |
-| `claude-agent@.service` | systemd user service template — one instance per agent |
+| `claude-agent@.service` | systemd user service template (Linux) — one instance per agent |
+| `com.claude.agent.plist` | launchd plist template (macOS, **untested**) — one copy per agent |
 | `patch-telegram-plugin.sh` | One-line patch for multi-agent `TELEGRAM_STATE_DIR` support |
 | `setup-agent.sh` | Interactive helper to configure a new agent's bot token and access policy |
 
@@ -53,9 +54,11 @@ systemd
 - [Claude Code](https://claude.ai/code) installed (`claude` in PATH)
 - [Bun](https://bun.sh) installed (the Telegram plugin runs on Bun)
 - tmux **3.0+**: `sudo apt-get install -y tmux` (or `brew install tmux`). Check with `tmux -V`. The launcher uses `tmux new-session -e` for env vars, which requires 3.0+.
-- systemd (Linux) — for persistent services
+- **Linux:** systemd (for persistent services) — tested on Ubuntu 22.04
+- **macOS:** launchd (untested — see [macOS setup](#macos-launchd-untested) below)
+- **Windows:** use WSL2 with systemd enabled, then follow the Linux instructions
 
-## Quick Start
+## Quick Start (Linux / systemd)
 
 ### 1. Populate the plugin cache
 
@@ -169,6 +172,66 @@ journalctl --user -u claude-agent@my-agent -f
 
 # Status of all agents
 systemctl --user status 'claude-agent@*'
+```
+
+## macOS (launchd) — UNTESTED
+
+> **This has not been tested on a real macOS machine.** The tmux launcher and plugin patch are portable, but the launchd integration is a best-effort port from the tested Linux/systemd setup. If you try this and hit issues, please open an issue.
+
+Steps 1–4 from the Linux quick start are identical (populate cache, patch, setup agent, install launcher). The difference is how the service is managed.
+
+### 5. Install the launchd plist
+
+```bash
+# Copy and customize the template for your agent
+cp com.claude.agent.plist ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+```
+
+Edit the plist — replace every `AGENT_NAME` with your agent name and `USERNAME` with your macOS username:
+
+```bash
+sed -i '' "s/AGENT_NAME/my-agent/g; s/USERNAME/$(whoami)/g" \
+  ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+```
+
+Also update `WorkingDirectory` to point to the directory containing your agent's `CLAUDE.md`.
+
+### 6. Load and start
+
+```bash
+launchctl load ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+```
+
+### 7. Accept the trust prompt and verify
+
+```bash
+# Attach to accept the first-launch trust prompt
+tmux attach -t claude-my-agent
+# Press Enter on "Yes, I trust this folder", then Ctrl-b d to detach
+
+# Check it's running
+tmux list-sessions
+ps aux | grep 'bun server.ts'
+
+# View logs
+tail -f /tmp/claude-agent-my-agent.log
+```
+
+### Managing agents (macOS)
+
+```bash
+# Stop
+launchctl unload ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+
+# Start
+launchctl load ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+
+# Restart (unload + load)
+launchctl unload ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+launchctl load ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
+
+# View logs
+tail -f /tmp/claude-agent-my-agent.log
 ```
 
 ## Troubleshooting
