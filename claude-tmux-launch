@@ -50,6 +50,42 @@ tmux new-session -d -s "$SESSION" \
 
 # Stay alive while the session exists. When claude exits the tmux window closes,
 # the session is destroyed, this loop exits, and systemd restarts the service.
+#
+# Health check: the bun plugin process can die while claude stays alive, leaving
+# the bot silently unresponsive. If bun hasn't been running for HEALTH_GRACE
+# seconds, kill the session so systemd restarts everything cleanly.
+HEALTH_GRACE=120  # seconds to wait after launch before checking for bun
+LAUNCH_TIME=$(date +%s)
+BUN_MISSING_SINCE=""
+
 while tmux has-session -t "$SESSION" 2>/dev/null; do
-  sleep 5
+  sleep 10
+
+  # Skip health checks during startup grace period.
+  NOW=$(date +%s)
+  if (( NOW - LAUNCH_TIME < HEALTH_GRACE )); then
+    continue
+  fi
+
+  # Get the tmux session's pane PID, then check if any bun descendant exists.
+  PANE_PID=$(tmux list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null) || continue
+  if pgrep -P "$PANE_PID" -f 'bun' >/dev/null 2>&1 || \
+     pgrep --parent "$(pgrep -P "$PANE_PID" -d,)" -f 'bun' >/dev/null 2>&1; then
+    BUN_MISSING_SINCE=""
+    continue
+  fi
+
+  # Bun not found — start (or continue) the missing timer.
+  if [[ -z "$BUN_MISSING_SINCE" ]]; then
+    BUN_MISSING_SINCE=$NOW
+    echo "$(date -Iseconds) [health] bun process not found for ${AGENT}, watching..." >&2
+    continue
+  fi
+
+  # If bun has been missing for over 60 seconds, kill the session to trigger restart.
+  if (( NOW - BUN_MISSING_SINCE > 60 )); then
+    echo "$(date -Iseconds) [health] bun missing for 60s — killing session ${SESSION} for restart" >&2
+    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    break
+  fi
 done
