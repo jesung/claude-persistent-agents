@@ -58,6 +58,17 @@ HEALTH_GRACE=120  # seconds to wait after launch before checking for bun
 LAUNCH_TIME=$(date +%s)
 BUN_MISSING_SINCE=""
 
+# Recursively collect all descendant PIDs of $1 (one PID per line).
+descendants() {
+  local parent=$1
+  local kids
+  kids=$(pgrep -P "$parent" 2>/dev/null) || return 0
+  for kid in $kids; do
+    echo "$kid"
+    descendants "$kid"
+  done
+}
+
 while tmux has-session -t "$SESSION" 2>/dev/null; do
   sleep 10
 
@@ -67,24 +78,44 @@ while tmux has-session -t "$SESSION" 2>/dev/null; do
     continue
   fi
 
-  # Get the tmux session's pane PID, then check if any bun descendant exists.
+  # Walk the full process tree to detect bun and active tool processes.
   PANE_PID=$(tmux list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null) || continue
-  if pgrep -P "$PANE_PID" -f 'bun' >/dev/null 2>&1 || \
-     pgrep --parent "$(pgrep -P "$PANE_PID" -d,)" -f 'bun' >/dev/null 2>&1; then
+
+  HAS_BUN=false
+  HAS_TOOL=false
+  while read -r pid; do
+    [[ -z "$pid" ]] && continue
+    cmd=$(ps -p "$pid" -o comm= 2>/dev/null) || continue
+    case "$cmd" in
+      bun*)    HAS_BUN=true ;;
+      claude*) ;;  # the agent itself — not a tool
+      *)       HAS_TOOL=true ;;
+    esac
+  done < <(descendants "$PANE_PID")
+
+  if $HAS_BUN; then
     BUN_MISSING_SINCE=""
     continue
   fi
 
-  # Bun not found — start (or continue) the missing timer.
+  if $HAS_TOOL; then
+    # Claude is actively running tools — don't penalise for bun absence.
+    [[ -n "$BUN_MISSING_SINCE" ]] && \
+      echo "$(date -Iseconds) [health] active tool work detected, resetting bun timer for ${AGENT}" >&2
+    BUN_MISSING_SINCE=""
+    continue
+  fi
+
+  # No bun, no active tools — start (or continue) the missing timer.
   if [[ -z "$BUN_MISSING_SINCE" ]]; then
     BUN_MISSING_SINCE=$NOW
     echo "$(date -Iseconds) [health] bun process not found for ${AGENT}, watching..." >&2
     continue
   fi
 
-  # If bun has been missing for over 60 seconds, kill the session to trigger restart.
-  if (( NOW - BUN_MISSING_SINCE > 60 )); then
-    echo "$(date -Iseconds) [health] bun missing for 60s — killing session ${SESSION} for restart" >&2
+  # If bun has been missing for over 5 minutes, kill the session to trigger restart.
+  if (( NOW - BUN_MISSING_SINCE > 300 )); then
+    echo "$(date -Iseconds) [health] bun missing for 5m — killing session ${SESSION} for restart" >&2
     tmux kill-session -t "$SESSION" 2>/dev/null || true
     break
   fi
