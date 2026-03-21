@@ -61,6 +61,7 @@ if [[ "$POLICY" == "allowlist" ]]; then
   "pending": {}
 }
 EOF
+  POLICY="allowlist"
 else
   cat > "${STATE_DIR}/access.json" <<EOF
 {
@@ -70,6 +71,7 @@ else
   "pending": {}
 }
 EOF
+  POLICY="pairing"
 fi
 chmod 600 "${STATE_DIR}/access.json"
 echo "  access.json written (dmPolicy: ${POLICY})."
@@ -93,7 +95,11 @@ echo "  3. Enable and start:"
 echo "       systemctl --user daemon-reload"
 echo "       systemctl --user enable --now claude-agent@${AGENT}"
 echo ""
-echo "  4. Check it's running:"
+echo "  4. Accept the first-launch trust prompt (once only):"
+echo "       tmux attach -t claude-${AGENT}"
+echo "       # Press Enter on 'Yes, I trust this folder', then Ctrl-b d to detach"
+echo ""
+echo "  5. Verify it's running:"
 echo "       systemctl --user status claude-agent@${AGENT}"
-echo "       tmux attach -t claude-${AGENT}   # view the session (Ctrl-b d to detach)"
+echo "       ps aux | grep 'bun server.ts'   # one process per active agent"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

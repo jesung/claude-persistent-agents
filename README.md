@@ -85,6 +85,7 @@ Creates `~/.claude/channels/telegram-my-agent/` with your bot token and access p
 ### 4. Install the launcher
 
 ```bash
+mkdir -p ~/bin
 cp claude-tmux-launch ~/bin/
 chmod +x ~/bin/claude-tmux-launch
 ```
@@ -112,7 +113,19 @@ systemctl --user daemon-reload
 systemctl --user enable --now claude-agent@my-agent
 ```
 
-### 7. Verify
+### 7. Accept the first-launch trust prompt
+
+On first launch of a new agent directory, Claude Code shows a folder trust prompt. Attach to the tmux session and press Enter to accept:
+
+```bash
+tmux attach -t claude-my-agent
+# Press Enter to select "Yes, I trust this folder"
+# Then Ctrl-b d to detach
+```
+
+This only happens once per agent directory.
+
+### 8. Verify
 
 ```bash
 # Service is running

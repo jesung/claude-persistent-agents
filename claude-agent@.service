@@ -32,8 +32,8 @@ Environment=TELEGRAM_STATE_DIR=%h/.claude/channels/telegram-%i
 EnvironmentFile=%h/.claude/channels/telegram-%i/.env
 
 # Launch claude inside a tmux session for a real PTY.
-# Put claude-tmux-launch somewhere on PATH (e.g. ~/bin/).
-ExecStart=claude-tmux-launch %i
+# Assumes claude-tmux-launch is installed at ~/bin/claude-tmux-launch.
+ExecStart=%h/bin/claude-tmux-launch %i
 
 Restart=always
 RestartSec=10
