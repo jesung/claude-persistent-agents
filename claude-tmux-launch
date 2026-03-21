@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# claude-tmux-launch — launcher for persistent Claude agent systemd services.
+#
+# Starts claude inside a detached tmux session (a real virtual PTY), which
+# keeps the MCP Telegram plugin connection alive for multi-turn conversations.
+# Loops until the tmux session ends so systemd can track liveness and apply
+# Restart=always when Claude exits.
+#
+# Usage: claude-tmux-launch <agent-name>
+# Called by: claude-agent@.service as ExecStart=claude-tmux-launch %i
+#
+# Expected env vars (set by the systemd unit):
+#   TELEGRAM_STATE_DIR   — per-agent state dir (~/.claude/channels/telegram-<name>)
+#   TELEGRAM_BOT_TOKEN   — bot token (loaded from EnvironmentFile)
+#   PATH                 — must include bun and claude
+
+set -euo pipefail
+
+AGENT="${1:?agent name required}"
+SESSION="claude-${AGENT}"
+
+# Kill any stale session from a previous run.
+tmux kill-session -t "$SESSION" 2>/dev/null || true
+
+# Launch claude inside a new detached tmux session.
+# Env vars are passed explicitly — tmux sessions don't inherit the systemd env.
+tmux new-session -d -s "$SESSION" \
+  -e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}" \
+  -e "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" \
+  -e "PATH=${PATH}" \
+  "claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official"
+
+# Stay alive while the session exists. When claude exits the tmux window closes,
+# the session is destroyed, this loop exits, and systemd restarts the service.
+while tmux has-session -t "$SESSION" 2>/dev/null; do
+  sleep 5
+done
