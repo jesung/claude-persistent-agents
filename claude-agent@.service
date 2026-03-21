@@ -1,17 +1,3 @@
-# claude-agent@.service — systemd user service template for persistent Claude agents.
-#
-# Usage:
-#   systemctl --user enable --now claude-agent@<agent-name>
-#
-# Customize:
-#   - WorkingDirectory: path to your agent directories (one subdir per agent)
-#   - Environment=PATH: adjust to include your bun and claude install locations
-#
-# State dir layout expected at ~/.claude/channels/telegram-<name>/:
-#   .env          — contains TELEGRAM_BOT_TOKEN=<token>
-#   access.json   — access control (dmPolicy, allowFrom, etc.)
-#   approved/     — created automatically
-
 [Unit]
 Description=Claude agent - %i
 After=network-online.target
@@ -19,24 +5,15 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-
-# Directory containing your agent's CLAUDE.md / instructions.
-# Structure: WorkingDirectory/<agent-name>/CLAUDE.md
-WorkingDirectory=%h/agents/%i
-
-# Adjust PATH to include wherever you installed bun and claude.
-Environment=PATH=%h/.bun/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-
-# Per-agent Telegram state directory and bot token.
-Environment=TELEGRAM_STATE_DIR=%h/.claude/channels/telegram-%i
-EnvironmentFile=%h/.claude/channels/telegram-%i/.env
-
-# Launch claude inside a tmux session for a real PTY.
-# Assumes claude-tmux-launch is installed at ~/bin/claude-tmux-launch.
-ExecStart=%h/bin/claude-tmux-launch %i
-ExecStop=/usr/bin/tmux kill-session -t claude-%i
-KillMode=process
-
+WorkingDirectory=/home/jesung/GitHub/cc-agents/%i
+Environment=PATH=/home/jesung/.bun/bin:/home/jesung/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=TELEGRAM_STATE_DIR=/home/jesung/.claude/channels/telegram-%i
+EnvironmentFile=/home/jesung/.claude/channels/telegram-%i/.env
+ExecStart=/home/jesung/bin/claude-tmux-launch %i
+ExecStartPost=/home/jesung/bin/telegram-notify %i "Back online."
+ExecStop=/usr/bin/tmux -L %i kill-server
+ExecStopPost=/home/jesung/bin/telegram-notify %i "Went offline — restarting in 10s."
+KillMode=control-group
 Restart=always
 RestartSec=10
 StandardOutput=journal

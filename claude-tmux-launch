@@ -37,12 +37,14 @@ for var in TELEGRAM_STATE_DIR TELEGRAM_BOT_TOKEN; do
   fi
 done
 
-# Kill any stale session from a previous run.
-tmux kill-session -t "$SESSION" 2>/dev/null || true
+# Kill any stale server from a previous run (per-agent socket = safe to nuke entirely).
+tmux -L "$AGENT" kill-server 2>/dev/null || true
 
-# Launch claude inside a new detached tmux session.
+# Launch claude inside a new detached tmux session on a per-agent tmux server.
+# Per-agent server (-L) isolates this agent's processes in its own cgroup, so
+# KillMode=control-group in the unit file cleanly reaps all orphans on stop.
 # Env vars are passed explicitly — tmux sessions don't inherit the systemd env.
-tmux new-session -d -s "$SESSION" \
+tmux -L "$AGENT" new-session -d -s "$SESSION" \
   -e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}" \
   -e "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" \
   -e "PATH=${PATH}" \
@@ -69,7 +71,7 @@ descendants() {
   done
 }
 
-while tmux has-session -t "$SESSION" 2>/dev/null; do
+while tmux -L "$AGENT" has-session -t "$SESSION" 2>/dev/null; do
   sleep 10
 
   # Skip health checks during startup grace period.
@@ -79,7 +81,7 @@ while tmux has-session -t "$SESSION" 2>/dev/null; do
   fi
 
   # Walk the full process tree to detect bun and active tool processes.
-  PANE_PID=$(tmux list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null) || continue
+  PANE_PID=$(tmux -L "$AGENT" list-panes -t "$SESSION" -F '#{pane_pid}' 2>/dev/null) || continue
 
   HAS_BUN=false
   HAS_TOOL=false
@@ -116,7 +118,7 @@ while tmux has-session -t "$SESSION" 2>/dev/null; do
   # If bun has been missing for over 5 minutes, kill the session to trigger restart.
   if (( NOW - BUN_MISSING_SINCE > 300 )); then
     echo "$(date -Iseconds) [health] bun missing for 5m — killing session ${SESSION} for restart" >&2
-    tmux kill-session -t "$SESSION" 2>/dev/null || true
+    tmux -L "$AGENT" kill-server 2>/dev/null || true
     break
   fi
 done
