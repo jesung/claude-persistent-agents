@@ -259,6 +259,7 @@ If systemd is managing Telegram for an agent, don't also start that agent manual
 - **`--dangerously-skip-permissions`** — used in the launcher for non-interactive operation. Remove it if you want to approve tool calls manually (you can respond via `tmux attach`).
 - **CGroup cosmetics** — `systemctl status` may show all bun processes under one agent's service. This is a tmux server inheritance quirk and doesn't affect functionality.
 - **Single-agent use** — if you only have one agent, skip step 2 entirely. The patch is only needed for multiple agents with separate tokens.
+- **`/telegram:access pair` doesn't work with custom state dirs** — the built-in pairing skill only checks the default `~/.claude/channels/telegram/` path, not `TELEGRAM_STATE_DIR`. For multi-agent setups, use the `allowlist` option in `setup-agent.sh` instead (pre-configures your user ID in `access.json`).
 
 ## License
 
