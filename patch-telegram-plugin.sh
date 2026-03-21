@@ -13,18 +13,28 @@
 
 set -euo pipefail
 
-CACHE_DIR="${HOME}/.claude/plugins/cache/claude-plugins-official/telegram/0.0.1"
-SERVER="${CACHE_DIR}/server.ts"
-PKG="${CACHE_DIR}/package.json"
+PLUGIN_BASE="${HOME}/.claude/plugins/cache/claude-plugins-official/telegram"
 
-if [[ ! -f "$SERVER" ]]; then
-  echo "Plugin cache not found at: $CACHE_DIR"
+# Find the cached plugin version dynamically.
+if [[ -d "$PLUGIN_BASE" ]]; then
+  CACHE_DIR=$(find "$PLUGIN_BASE" -maxdepth 1 -mindepth 1 -type d | sort -V | tail -1)
+fi
+
+if [[ -z "${CACHE_DIR:-}" || ! -f "${CACHE_DIR}/server.ts" ]]; then
+  echo "Plugin cache not found under: $PLUGIN_BASE"
+  if [[ -d "$PLUGIN_BASE" ]]; then
+    echo "  Found versions: $(ls "$PLUGIN_BASE" 2>/dev/null || echo 'none')"
+  fi
   echo ""
   echo "Populate it first by running Claude Code with the Telegram channel:"
   echo "  claude --channels plugin:telegram@claude-plugins-official"
   echo "Then re-run this script."
   exit 1
 fi
+
+echo "Using plugin cache: ${CACHE_DIR}"
+SERVER="${CACHE_DIR}/server.ts"
+PKG="${CACHE_DIR}/package.json"
 
 # --- Patch 1: server.ts ---
 OLD_LINE="const STATE_DIR = join(homedir(), '.claude', 'channels', 'telegram')"

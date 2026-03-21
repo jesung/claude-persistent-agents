@@ -19,6 +19,16 @@ set -euo pipefail
 AGENT="${1:?agent name required}"
 SESSION="claude-${AGENT}"
 
+# Verify required env vars are set (these come from the systemd unit).
+for var in TELEGRAM_STATE_DIR TELEGRAM_BOT_TOKEN; do
+  if [[ -z "${!var:-}" ]]; then
+    echo "Error: ${var} is not set." >&2
+    echo "  If running manually: export ${var}=... before launching." >&2
+    echo "  If running via systemd: check the unit's Environment/EnvironmentFile." >&2
+    exit 1
+  fi
+done
+
 # Kill any stale session from a previous run.
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 

@@ -2,7 +2,7 @@
 
 Infrastructure for running Claude Code agents persistently via Telegram — surviving reboots, terminal closes, and supporting full multi-turn conversations.
 
-> **Built on Claude Code's native `--channels` feature.** This repo is not a custom Telegram integration — it's a thin layer of systemd + tmux infrastructure on top of the [official Claude Code Telegram channel plugin](https://github.com/anthropics/claude-code). The plugin handles all the bot logic; this repo just keeps it alive.
+> **Built on Claude Code's native `--channels` feature.** This repo is not a custom Telegram integration — it's a thin layer of systemd + tmux infrastructure on top of the [official Claude Code Telegram channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels). The plugin handles all the bot logic; this repo just keeps it alive.
 
 ## Background: Claude Code Channels
 
@@ -17,7 +17,7 @@ This works great interactively. The problem comes when you want it to run **pers
 ## The Problems This Repo Solves
 
 **1. Headless PTY bug**
-In a headless environment (systemd, `nohup`, `screen` without a real PTY), Claude drops the MCP channel connection after processing one message. The bot responds once, then goes silent. Root cause: Claude's MCP plugin requires a real PTY to stay alive between turns.
+In a headless environment (systemd, `nohup`, or a custom PTY wrapper), Claude drops the MCP channel connection after processing one message. The bot responds once, then goes silent. Root cause: Claude's MCP plugin requires a full virtual terminal to stay alive between turns.
 
 **2. Session persistence**
 An agent started in a terminal tab dies when that tab is closed.
@@ -52,7 +52,7 @@ systemd
 
 - [Claude Code](https://claude.ai/code) installed (`claude` in PATH)
 - [Bun](https://bun.sh) installed (the Telegram plugin runs on Bun)
-- tmux: `sudo apt-get install -y tmux` (or `brew install tmux`)
+- tmux **3.0+**: `sudo apt-get install -y tmux` (or `brew install tmux`). Check with `tmux -V`. The launcher uses `tmux new-session -e` for env vars, which requires 3.0+.
 - systemd (Linux) — for persistent services
 
 ## Quick Start
