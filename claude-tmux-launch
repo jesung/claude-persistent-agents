@@ -44,11 +44,14 @@ tmux -L "$AGENT" kill-server 2>/dev/null || true
 # Per-agent server (-L) isolates this agent's processes in its own cgroup, so
 # KillMode=control-group in the unit file cleanly reaps all orphans on stop.
 # Env vars are passed explicitly — tmux sessions don't inherit the systemd env.
+CLAUDE_CMD="claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official"
+[[ -n "${CLAUDE_MODEL:-}" ]] && CLAUDE_CMD+=" --model ${CLAUDE_MODEL}"
+
 tmux -L "$AGENT" new-session -d -s "$SESSION" \
   -e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}" \
   -e "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" \
   -e "PATH=${PATH}" \
-  "claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official"
+  "$CLAUDE_CMD"
 
 # Stay alive while the session exists. When claude exits the tmux window closes,
 # the session is destroyed, this loop exits, and systemd restarts the service.
