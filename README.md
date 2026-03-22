@@ -34,7 +34,7 @@ For multi-agent use, a one-line patch to the cached plugin adds `TELEGRAM_STATE_
 ```
 systemd / launchd
   └── claude-tmux-launch <agent>           # launcher: keeps service manager tracking liveness
-        └── tmux new-session -d -s claude-<agent>
+        └── tmux -L <agent> new-session -d -s claude-<agent>   # per-agent tmux server
               └── claude --channels plugin:telegram@claude-plugins-official
                     └── bun server.ts      # official Claude Code Telegram plugin
 ```
@@ -100,7 +100,7 @@ mkdir -p ~/.config/systemd/user
 cp claude-agent@.service ~/.config/systemd/user/
 ```
 
-Edit two lines in the unit to match your setup:
+Edit the unit to match your setup:
 
 ```bash
 nano ~/.config/systemd/user/claude-agent@.service
@@ -108,6 +108,7 @@ nano ~/.config/systemd/user/claude-agent@.service
 
 - `WorkingDirectory` — directory containing your agent subdirs (e.g. `~/agents/%i` where `~/agents/my-agent/CLAUDE.md` is your agent's system prompt)
 - `Environment=PATH` — ensure bun and claude are on the path
+- `ExecStartPost` / `ExecStopPost` — the template includes notification hooks (`telegram-notify`). Remove these lines or replace them with your own notification script if you don't have one.
 
 ### 6. Enable and start
 
@@ -121,7 +122,7 @@ systemctl --user enable --now claude-agent@my-agent
 On first launch of a new agent directory, Claude Code shows a folder trust prompt. Attach to the tmux session and press Enter to accept:
 
 ```bash
-tmux attach -t claude-my-agent
+tmux -L my-agent attach -t claude-my-agent
 # Press Enter to select "Yes, I trust this folder"
 # Then Ctrl-b d to detach
 ```
@@ -134,14 +135,14 @@ This only happens once per agent directory.
 # Service is running
 systemctl --user status claude-agent@my-agent
 
-# tmux session exists
-tmux list-sessions                        # should show: claude-my-agent
+# tmux session exists (each agent has its own tmux server, pass -L)
+tmux -L my-agent list-sessions            # should show: claude-my-agent
 
 # Telegram plugin is polling
 ps aux | grep 'bun server.ts'             # should show one process per agent
 
 # Watch the agent live (Ctrl-b d to detach)
-tmux attach -t claude-my-agent
+tmux -L my-agent attach -t claude-my-agent
 ```
 
 Send your bot a message on Telegram — it should respond, and keep responding across multiple turns.
@@ -174,10 +175,10 @@ journalctl --user -u claude-agent@my-agent -f
 systemctl --user status 'claude-agent@*'
 
 # Send a command to a running agent (without attaching)
-tmux send-keys -t claude-my-agent '/some-command' Enter
+tmux -L my-agent send-keys -t claude-my-agent '/some-command' Enter
 
 # Read an agent's recent output (without attaching)
-tmux capture-pane -t claude-my-agent -p | tail -20
+tmux -L my-agent capture-pane -t claude-my-agent -p | tail -20
 ```
 
 ## macOS (launchd) — UNTESTED
@@ -212,11 +213,11 @@ launchctl load ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
 
 ```bash
 # Attach to accept the first-launch trust prompt
-tmux attach -t claude-my-agent
+tmux -L my-agent attach -t claude-my-agent
 # Press Enter on "Yes, I trust this folder", then Ctrl-b d to detach
 
 # Check it's running
-tmux list-sessions
+tmux -L my-agent list-sessions
 ps aux | grep 'bun server.ts'
 
 # View logs
@@ -243,7 +244,10 @@ tail -f /tmp/claude-agent-my-agent.log
 ## Troubleshooting
 
 **Bot responds once then goes silent**
-The MCP plugin process died. Check `ps aux | grep 'bun server.ts'` — there should be one per agent. Fix: `systemctl --user restart claude-agent@<name>`. Verify tmux is in use: `tmux list-sessions` should show `claude-<name>`.
+The MCP plugin process died. Check `ps aux | grep 'bun server.ts'` — there should be one per agent. Fix: `systemctl --user restart claude-agent@<name>`. Verify tmux is in use: `tmux -L <name> list-sessions` should show `claude-<name>`.
+
+**Bot goes silent after being fine for a while**
+The bun health check may not have triggered yet, or the 5-minute timeout is too long for your use case. Check with `ps aux | grep 'bun server.ts'` — if bun is gone, restart manually: `systemctl --user restart claude-agent@<name>`. The health check (see [How the launcher works](#how-the-launcher-works)) will handle this automatically after the timeout.
 
 **No response at all**
 - Check `access.json`: `dmPolicy` and `allowFrom` must allow your Telegram user ID
@@ -259,11 +263,21 @@ Each agent must have a unique bot token — two pollers on the same token split 
 **Don't mix systemd and manual `--channels` sessions**
 If systemd is managing Telegram for an agent, don't also start that agent manually with `--channels`. Two pollers on the same token will compete.
 
+## How the launcher works
+
+`claude-tmux-launch` does more than just start Claude — it also monitors it:
+
+1. **Per-agent tmux server** — uses `-L <agent>` to give each agent its own tmux server socket. Combined with `KillMode=control-group` in the systemd unit, this ensures all child processes (claude, bun, any spawned tools) are cleanly reaped when the service stops. No orphaned bun instances accumulating across restarts.
+
+2. **Bun health check** — the launcher polls every 10 seconds for a running `bun` descendant. If bun dies while Claude stays alive (leaving the bot silently unresponsive), the health check detects it and kills the tmux session after a 5-minute timeout, triggering a clean systemd restart. A 2-minute grace period after launch prevents false restarts on startup.
+
+3. **Tool-aware restart prevention** — if Claude is actively running tools (builds, shell commands, etc.) the bun-missing timer resets, preventing spurious restarts during long-running tasks.
+
 ## Caveats
 
 - **`TELEGRAM_STATE_DIR` patch** — targets a specific line in the cached plugin. May need updating if the official plugin is significantly reworked. The patch script will tell you if it can't find the expected line.
-- **`--dangerously-skip-permissions`** — used in the launcher for non-interactive operation. Remove it if you want to approve tool calls manually (you can respond via `tmux attach`).
-- **CGroup cosmetics** — `systemctl status` may show all bun processes under one agent's service. This is a tmux server inheritance quirk and doesn't affect functionality.
+- **`--dangerously-skip-permissions`** — used in the launcher for non-interactive operation. Remove it if you want to approve tool calls manually (you can respond via `tmux -L <agent> attach`).
+- **tmux `-L` flag** — all tmux commands for a managed agent require `-L <agent-name>` to target its server. Plain `tmux list-sessions` will show nothing, since each agent runs on its own isolated socket.
 - **Single-agent use** — if you only have one agent, skip step 2 entirely. The patch is only needed for multiple agents with separate tokens.
 - **`/telegram:access pair` doesn't work with custom state dirs** — the built-in pairing skill only checks the default `~/.claude/channels/telegram/` path, not `TELEGRAM_STATE_DIR`. For multi-agent setups, use the `allowlist` option in `setup-agent.sh` instead (pre-configures your user ID in `access.json`).
 
