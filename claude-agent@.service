@@ -10,7 +10,7 @@ Environment=PATH=/home/jesung/.bun/bin:/home/jesung/.local/bin:/usr/local/sbin:/
 Environment=TELEGRAM_STATE_DIR=/home/jesung/.claude/channels/telegram-%i
 EnvironmentFile=/home/jesung/.claude/channels/telegram-%i/.env
 ExecStart=/home/jesung/bin/claude-tmux-launch %i
-ExecStartPost=/home/jesung/bin/telegram-notify %i "Back online."
+ExecStartPost=/bin/bash -c '/home/jesung/bin/telegram-notify %i "Back online ($CLAUDE_MODEL)."'
 ExecStop=-/usr/bin/tmux -L %i kill-server
 ExecStopPost=/home/jesung/bin/telegram-notify %i "Went offline — restarting in 10s."
 KillMode=control-group
