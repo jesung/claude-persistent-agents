@@ -2,7 +2,7 @@
 
 Infrastructure for running Claude Code agents persistently via Telegram or Matrix — surviving reboots, terminal closes, and supporting full multi-turn conversations.
 
-> **Built on Claude Code's native `--channels` feature.** The Telegram integration uses the [official Claude Code Telegram channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels) — this repo is just a thin systemd + tmux layer to keep it alive persistently. Matrix support is a community extension using a custom MCP server (`cc_matrix_channel`).
+> **Built on Claude Code's native `--channels` feature.** The Telegram integration uses the [official Claude Code Telegram channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels) — this repo is just a thin systemd + tmux layer to keep it alive persistently. Matrix support is a community extension using [`cc_matrix_channel`](https://github.com/IA-PieroCV/cc_matrix_channel), a custom MCP server by [@IA-PieroCV](https://github.com/IA-PieroCV).
 
 ## Background: Claude Code Channels
 
@@ -13,7 +13,7 @@ Claude Code has a first-class `--channels` feature that connects Claude to exter
 claude --channels plugin:telegram@claude-plugins-official
 ```
 
-**Matrix** (community) — via `cc_matrix_channel`, a custom MCP server that provides E2EE messaging over Matrix:
+**Matrix** (community) — via [`cc_matrix_channel`](https://github.com/IA-PieroCV/cc_matrix_channel), a custom MCP server that provides E2EE messaging over Matrix:
 ```bash
 claude --dangerously-load-development-channels server:matrix
 ```
@@ -253,7 +253,7 @@ tail -f /tmp/claude-agent-my-agent.log
 
 ## Matrix Support
 
-The launcher and service unit also support Matrix via the `cc_matrix_channel` Rust binary, which acts as an MCP server providing E2EE messaging.
+The launcher and service unit also support Matrix via [`cc_matrix_channel`](https://github.com/IA-PieroCV/cc_matrix_channel), a Rust MCP server by [@IA-PieroCV](https://github.com/IA-PieroCV) that provides E2EE messaging.
 
 ### How it differs from Telegram
 
@@ -267,7 +267,7 @@ The launcher and service unit also support Matrix via the `cc_matrix_channel` Ru
 
 ### Setup
 
-**1. Install the binary.** Build or install `cc_matrix_channel` into `~/.local/bin/`.
+**1. Install the binary.** Build or install [`cc_matrix_channel`](https://github.com/IA-PieroCV/cc_matrix_channel) into `~/.local/bin/`.
 
 **2. Create a Matrix account** for the agent on your homeserver.
 
