@@ -88,19 +88,27 @@ if [[ "$CHANNEL_PLUGIN" == server:* ]]; then
   ( sleep 5 && tmux -L "$AGENT" send-keys -t "$SESSION" "" Enter ) &
 fi
 
-# System "Back online" notification once Claude has had time to fully initialize (~20s).
+# Agent-specific startup notification once Claude has had time to fully initialize (~20s).
 # Uses CLAUDE_CHANNEL_PLUGIN to route to the right backend (Telegram or Matrix).
-( sleep 20 && CLAUDE_CHANNEL_PLUGIN="${CHANNEL_PLUGIN}" /home/jesung/bin/claude-notify "$AGENT" "Back online${CLAUDE_MODEL:+ (${CLAUDE_MODEL})}." 2>/dev/null || true ) &
+case "$AGENT" in
+  aegis)      _STARTUP_MSG="Raising the shield..." ;;
+  hermes)     _STARTUP_MSG="Wings unfurling..." ;;
+  athena)     _STARTUP_MSG="The owl stirs..." ;;
+  hephaestus) _STARTUP_MSG="Firing up the forge..." ;;
+  zeus)       _STARTUP_MSG="Thunder stirs on Olympus..." ;;
+  *)          _STARTUP_MSG="Back online" ;;
+esac
+( sleep 20 && CLAUDE_CHANNEL_PLUGIN="${CHANNEL_PLUGIN}" /home/jesung/bin/claude-notify "$AGENT" "${_STARTUP_MSG}${CLAUDE_MODEL:+ (${CLAUDE_MODEL})}" 2>/dev/null || true ) &
+unset _STARTUP_MSG
 
 # Inject a greeting prompt into the Claude session at 25s so Claude actively greets
 # the user through the channel — confirming the AI layer is responsive, not just the process.
-if [[ "$CHANNEL_PLUGIN" == server:matrix || "$CHANNEL_PLUGIN" == matrix@* ]]; then
-  _CHANNEL_NAME="Matrix"
-else
-  _CHANNEL_NAME="Telegram"
+# Skipped for Matrix agents: the MCP blocks sends to rooms with no prior inbound messages,
+# so proactive greetings fail silently. Matrix agents greet naturally on first user message.
+# (See beads ticket for plugin fix to pre-authorize rooms from access.json.)
+if [[ "$CHANNEL_PLUGIN" != server:matrix && "$CHANNEL_PLUGIN" != matrix@* ]]; then
+  ( sleep 25 && tmux -L "$AGENT" send-keys -t "$SESSION" "You just came back online. Your active channel is Telegram. Send the user a brief greeting." Enter ) &
 fi
-( sleep 25 && tmux -L "$AGENT" send-keys -t "$SESSION" "You just came back online. Your active channel is ${_CHANNEL_NAME}. Send the user a brief greeting." Enter ) &
-unset _CHANNEL_NAME
 
 # Stay alive while the session exists. When claude exits the tmux window closes,
 # the session is destroyed, this loop exits, and systemd restarts the service.
