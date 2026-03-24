@@ -2,23 +2,23 @@
 
 Infrastructure for running Claude Code agents persistently via Telegram or Matrix — surviving reboots, terminal closes, and supporting full multi-turn conversations.
 
-> **Built on Claude Code's native `--channels` feature.** This repo is not a custom messaging integration — it's a thin layer of systemd + tmux infrastructure on top of Claude Code's official channel plugins. The plugins handle all the messaging logic; this repo just keeps them alive.
+> **Built on Claude Code's native `--channels` feature.** The Telegram integration uses the [official Claude Code Telegram channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels) — this repo is just a thin systemd + tmux layer to keep it alive persistently. Matrix support is a community extension using a custom MCP server (`cc_matrix_channel`).
 
 ## Background: Claude Code Channels
 
-Claude Code has a first-class `--channels` feature that connects Claude to external messaging platforms. Two approaches are supported:
+Claude Code has a first-class `--channels` feature that connects Claude to external messaging platforms. This repo supports two backends:
 
-**Telegram** — via the official plugin:
+**Telegram** (official) — via the [official Claude Code plugin](https://docs.anthropic.com/en/docs/claude-code/channels):
 ```bash
 claude --channels plugin:telegram@claude-plugins-official
 ```
 
-**Matrix** — via a local MCP server (the `cc_matrix_channel` Rust binary):
+**Matrix** (community) — via `cc_matrix_channel`, a custom MCP server that provides E2EE messaging over Matrix:
 ```bash
 claude --dangerously-load-development-channels server:matrix
 ```
 
-Both work great interactively. The problem comes when you want them to run **persistently** — in the background, surviving terminal closes, across reboots — especially with **multiple agents each on their own account**.
+Both work interactively. The problem comes when you want them to run **persistently** — in the background, surviving terminal closes, across reboots — especially with **multiple agents each on their own account**.
 
 ## The Problems This Repo Solves
 
@@ -292,7 +292,7 @@ The launcher and service unit also support Matrix via the `cc_matrix_channel` Ru
 }
 ```
 
-> **Why `.mcp.json` and not `~/.claude.json`?** The `--dangerously-load-development-channels server:matrix` flag only discovers MCP servers from project-level `.mcp.json` files, not from the `projects[path].mcpServers` key in `~/.claude.json`.
+> **Why `.mcp.json` and not `~/.claude.json`?** In practice, `--dangerously-load-development-channels server:matrix` did not pick up the MCP server when configured under `projects[path].mcpServers` in `~/.claude.json`, but did work with a project-level `.mcp.json`. Use `.mcp.json` until this is better understood.
 
 **4. Enable the Matrix channel** in the agent's state `.env`:
 
