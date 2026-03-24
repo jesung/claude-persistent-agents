@@ -2,40 +2,65 @@
 # claude-tmux-launch — launcher for persistent Claude agent services.
 #
 # Starts claude inside a detached tmux session (a real virtual PTY), which
-# keeps the MCP Telegram plugin connection alive for multi-turn conversations.
+# keeps the MCP channel plugin connection alive for multi-turn conversations.
 # Loops until the tmux session ends so the service manager (systemd/launchd)
 # can track liveness and restart on exit.
 #
 # Usage: claude-tmux-launch <agent-name>
 #
-# Expected env vars:
+# Channel selection (set in agent .env):
+#   CLAUDE_CHANNEL_PLUGIN  — channel spec:
+#     telegram@claude-plugins-official  — Telegram (default)
+#     matrix@local                      — TypeScript Matrix plugin (bun)
+#     server:matrix                     — Rust Matrix binary (cc_matrix_channel)
+#
+# Telegram env vars (default):
 #   TELEGRAM_STATE_DIR   — per-agent state dir (~/.claude/channels/telegram-<name>)
 #   TELEGRAM_BOT_TOKEN   — bot token (auto-sourced from STATE_DIR/.env if not set)
-#   PATH                 — must include bun and claude
+#
+# Matrix plugin env vars (when CLAUDE_CHANNEL_PLUGIN=matrix@local):
+#   MATRIX_STATE_DIR     — per-agent state dir (~/.claude/channels/matrix-<name>)
+#   MATRIX_ACCESS_TOKEN  — access token (auto-sourced from STATE_DIR/.env if not set)
+#
+# Matrix server env vars (when CLAUDE_CHANNEL_PLUGIN=server:matrix):
+#   All Matrix config is in ~/.claude.json mcpServers.matrix.env for the project.
+#   No extra env vars needed here.
+#
+# PATH must include bun, cc_matrix_channel, and claude.
 
 set -euo pipefail
 
 AGENT="${1:?agent name required}"
 SESSION="claude-${AGENT}"
 
-# Source .env from the state dir if TELEGRAM_BOT_TOKEN isn't already set.
-# systemd uses EnvironmentFile for this; launchd doesn't have an equivalent.
-if [[ -z "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_STATE_DIR:-}" && -f "${TELEGRAM_STATE_DIR}/.env" ]]; then
-  set -a
-  source "${TELEGRAM_STATE_DIR}/.env"
-  set +a
-fi
+CHANNEL_PLUGIN="${CLAUDE_CHANNEL_PLUGIN:-telegram@claude-plugins-official}"
 
-# Verify required env vars are set.
-for var in TELEGRAM_STATE_DIR TELEGRAM_BOT_TOKEN; do
-  if [[ -z "${!var:-}" ]]; then
-    echo "Error: ${var} is not set." >&2
-    echo "  If running manually: export ${var}=... before launching." >&2
-    echo "  If running via systemd: check the unit's Environment/EnvironmentFile." >&2
-    echo "  If running via launchd: check EnvironmentVariables in the plist." >&2
-    exit 1
+# Source channel .env for launchd compatibility (systemd uses EnvironmentFile).
+if [[ "$CHANNEL_PLUGIN" == server:* ]]; then
+  # Server-type channel (e.g. server:matrix): all config is in .claude.json mcpServers.
+  # No special env vars needed here — just pass an empty set.
+  CHANNEL_ENV=()
+elif [[ "$CHANNEL_PLUGIN" == matrix@* ]]; then
+  if [[ -z "${MATRIX_ACCESS_TOKEN:-}" && -n "${MATRIX_STATE_DIR:-}" && -f "${MATRIX_STATE_DIR}/.env" ]]; then
+    set -a; source "${MATRIX_STATE_DIR}/.env"; set +a
   fi
-done
+  for var in MATRIX_STATE_DIR MATRIX_ACCESS_TOKEN; do
+    if [[ -z "${!var:-}" ]]; then
+      echo "Error: ${var} is not set." >&2; exit 1
+    fi
+  done
+  CHANNEL_ENV=(-e "MATRIX_STATE_DIR=${MATRIX_STATE_DIR}" -e "MATRIX_ACCESS_TOKEN=${MATRIX_ACCESS_TOKEN}")
+else
+  if [[ -z "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_STATE_DIR:-}" && -f "${TELEGRAM_STATE_DIR}/.env" ]]; then
+    set -a; source "${TELEGRAM_STATE_DIR}/.env"; set +a
+  fi
+  for var in TELEGRAM_STATE_DIR TELEGRAM_BOT_TOKEN; do
+    if [[ -z "${!var:-}" ]]; then
+      echo "Error: ${var} is not set." >&2; exit 1
+    fi
+  done
+  CHANNEL_ENV=(-e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}" -e "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}")
+fi
 
 # Kill any stale server from a previous run (per-agent socket = safe to nuke entirely).
 tmux -L "$AGENT" kill-server 2>/dev/null || true
@@ -44,24 +69,45 @@ tmux -L "$AGENT" kill-server 2>/dev/null || true
 # Per-agent server (-L) isolates this agent's processes in its own cgroup, so
 # KillMode=control-group in the unit file cleanly reaps all orphans on stop.
 # Env vars are passed explicitly — tmux sessions don't inherit the systemd env.
-CLAUDE_CMD="claude --dangerously-skip-permissions --channels plugin:telegram@claude-plugins-official"
+if [[ "$CHANNEL_PLUGIN" == server:* ]]; then
+  CLAUDE_CMD="claude --dangerously-skip-permissions --dangerously-load-development-channels ${CHANNEL_PLUGIN}"
+else
+  CLAUDE_CMD="claude --dangerously-skip-permissions --channels plugin:${CHANNEL_PLUGIN}"
+fi
 [[ -n "${CLAUDE_MODEL:-}" ]] && CLAUDE_CMD+=" --model ${CLAUDE_MODEL}"
 
 tmux -L "$AGENT" new-session -d -s "$SESSION" \
-  -e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}" \
-  -e "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}" \
+  "${CHANNEL_ENV[@]}" \
+  -e "CLAUDE_CHANNEL_PLUGIN=${CHANNEL_PLUGIN}" \
   -e "PATH=${PATH}" \
   "$CLAUDE_CMD"
+
+# server: channels show an interactive "I am using this for local development"
+# confirmation prompt on startup. Auto-confirm it after a short delay.
+if [[ "$CHANNEL_PLUGIN" == server:* ]]; then
+  ( sleep 5 && tmux -L "$AGENT" send-keys -t "$SESSION" "" Enter ) &
+fi
 
 # Stay alive while the session exists. When claude exits the tmux window closes,
 # the session is destroyed, this loop exits, and systemd restarts the service.
 #
-# Health check: the bun plugin process can die while claude stays alive, leaving
-# the bot silently unresponsive. If bun hasn't been running for HEALTH_GRACE
-# seconds, kill the session so systemd restarts everything cleanly.
-HEALTH_GRACE=120  # seconds to wait after launch before checking for bun
+# Health check: the channel bridge process can die while claude stays alive, leaving
+# the bot silently unresponsive. Track which process to watch based on channel type:
+#   plugin:matrix@local  → bun (TypeScript plugin)
+#   server:matrix        → cc_matrix_channel (Rust binary, managed by Claude as MCP child)
+#
+# For server: channels, Claude manages the subprocess lifecycle, so we only watch
+# for prolonged absence without active tool work (same logic, different process name).
+HEALTH_GRACE=120  # seconds to wait after launch before checking for the bridge
 LAUNCH_TIME=$(date +%s)
 BUN_MISSING_SINCE=""
+
+# Determine which process name to health-check.
+if [[ "$CHANNEL_PLUGIN" == server:matrix ]]; then
+  BRIDGE_PROC="cc_matrix_ch"  # truncated to 15 chars (Linux comm limit)
+else
+  BRIDGE_PROC="bun"
+fi
 
 # Recursively collect all descendant PIDs of $1 (one PID per line).
 descendants() {
@@ -92,9 +138,9 @@ while tmux -L "$AGENT" has-session -t "$SESSION" 2>/dev/null; do
     [[ -z "$pid" ]] && continue
     cmd=$(ps -p "$pid" -o comm= 2>/dev/null) || continue
     case "$cmd" in
-      bun*)    HAS_BUN=true ;;
-      claude*) ;;  # the agent itself — not a tool
-      *)       HAS_TOOL=true ;;
+      ${BRIDGE_PROC}*) HAS_BUN=true ;;
+      claude*)         ;;  # the agent itself — not a tool
+      *)               HAS_TOOL=true ;;
     esac
   done < <(descendants "$PANE_PID")
 
@@ -106,7 +152,7 @@ while tmux -L "$AGENT" has-session -t "$SESSION" 2>/dev/null; do
   if $HAS_TOOL; then
     # Claude is actively running tools — don't penalise for bun absence.
     [[ -n "$BUN_MISSING_SINCE" ]] && \
-      echo "$(date -Iseconds) [health] active tool work detected, resetting bun timer for ${AGENT}" >&2
+      echo "$(date -Iseconds) [health] active tool work detected, resetting bridge timer for ${AGENT}" >&2
     BUN_MISSING_SINCE=""
     continue
   fi
@@ -114,13 +160,13 @@ while tmux -L "$AGENT" has-session -t "$SESSION" 2>/dev/null; do
   # No bun, no active tools — start (or continue) the missing timer.
   if [[ -z "$BUN_MISSING_SINCE" ]]; then
     BUN_MISSING_SINCE=$NOW
-    echo "$(date -Iseconds) [health] bun process not found for ${AGENT}, watching..." >&2
+    echo "$(date -Iseconds) [health] bridge process (${BRIDGE_PROC}) not found for ${AGENT}, watching..." >&2
     continue
   fi
 
   # If bun has been missing for over 5 minutes, kill the session to trigger restart.
   if (( NOW - BUN_MISSING_SINCE > 300 )); then
-    echo "$(date -Iseconds) [health] bun missing for 5m — killing session ${SESSION} for restart" >&2
+    echo "$(date -Iseconds) [health] bridge missing for 5m — killing session ${SESSION} for restart" >&2
     tmux -L "$AGENT" kill-server 2>/dev/null || true
     break
   fi
