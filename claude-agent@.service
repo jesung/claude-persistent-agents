@@ -7,12 +7,19 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/home/jesung/GitHub/cc-agents/%i
 Environment=PATH=/home/jesung/.bun/bin:/home/jesung/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Telegram (default — active for unmigrated agents)
 Environment=TELEGRAM_STATE_DIR=/home/jesung/.claude/channels/telegram-%i
-EnvironmentFile=/home/jesung/.claude/channels/telegram-%i/.env
+EnvironmentFile=-/home/jesung/.claude/channels/telegram-%i/.env
+
+# Matrix (active for migrated agents — set CLAUDE_CHANNEL_PLUGIN=matrix@local in agent .env)
+Environment=MATRIX_STATE_DIR=/home/jesung/.claude/channels/matrix-%i
+EnvironmentFile=-/home/jesung/.claude/channels/matrix-%i/.env
+
 ExecStart=/home/jesung/bin/claude-tmux-launch %i
-ExecStartPost=/bin/bash -c '/home/jesung/bin/telegram-notify %i "Back online ($CLAUDE_MODEL)."'
 ExecStop=-/usr/bin/tmux -L %i kill-server
-ExecStopPost=/home/jesung/bin/telegram-notify %i "Went offline — restarting in 10s."
+ExecStopPost=/home/jesung/bin/claude-notify %i "Went offline — restarting in 10s."
+TimeoutStopSec=15
 KillMode=control-group
 Restart=always
 RestartSec=10
