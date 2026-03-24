@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Usage: matrix-notify <agent-name> <message>
+# Posts a plain-text message to the agent's status room (unencrypted).
+# Reads statusRoom from access.json and MATRIX_HOMESERVER from .env.
+# Expects MATRIX_ACCESS_TOKEN and MATRIX_STATE_DIR in the environment
+# (both are set by the claude-agent@.service unit).
+set -euo pipefail
+
+AGENT="${1:?agent name required}"
+MESSAGE="${2:?message required}"
+
+TOKEN="${MATRIX_ACCESS_TOKEN:?MATRIX_ACCESS_TOKEN not set}"
+STATE_DIR="${MATRIX_STATE_DIR:?MATRIX_STATE_DIR not set}"
+
+HOMESERVER=$(python3 -c "
+import re, sys
+try:
+    for line in open('${STATE_DIR}/.env'):
+        m = re.match(r'^MATRIX_HOMESERVER=(.+)', line.strip())
+        if m:
+            print(m.group(1).strip())
+            sys.exit(0)
+    sys.exit(1)
+except Exception:
+    sys.exit(1)
+") || { echo "matrix-notify: could not read MATRIX_HOMESERVER from ${STATE_DIR}/.env" >&2; exit 1; }
+
+ROOM_ID=$(python3 -c "
+import json, sys
+try:
+    data = json.load(open('${STATE_DIR}/access.json'))
+    room = data.get('statusRoom') or (data.get('rooms') or [None])[0]
+    if not room:
+        sys.exit(1)
+    print(room)
+except Exception:
+    sys.exit(1)
+") || { echo "matrix-notify: could not read room ID from ${STATE_DIR}/access.json" >&2; exit 1; }
+
+ROOM_ID_ENC=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1], safe=''))" "$ROOM_ID")
+TXN_ID="notify-$(date +%s%N)"
+
+curl -s -X PUT \
+    "${HOMESERVER}/_matrix/client/v3/rooms/${ROOM_ID_ENC}/send/m.room.message/${TXN_ID}" \
+    -H "Authorization: Bearer ${TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"msgtype\": \"m.text\", \"body\": \"[${AGENT}] ${MESSAGE}\"}" \
+    > /dev/null

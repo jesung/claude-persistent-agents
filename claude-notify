@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Usage: claude-notify <agent-name> <message>
+# Delegates to matrix-notify or telegram-notify based on CLAUDE_CHANNEL_PLUGIN.
+# Defaults to telegram if unset — existing agents keep working unchanged.
+set -euo pipefail
+
+AGENT="${1:?agent name required}"
+MESSAGE="${2:?message required}"
+
+case "${CLAUDE_CHANNEL_PLUGIN:-telegram@claude-plugins-official}" in
+  matrix@*|server:matrix)
+    exec /home/jesung/bin/matrix-notify "$AGENT" "$MESSAGE"
+    ;;
+  *)
+    exec /home/jesung/bin/telegram-notify "$AGENT" "$MESSAGE"
+    ;;
+esac
