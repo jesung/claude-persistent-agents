@@ -1,18 +1,24 @@
 # claude-persistent-agents
 
-Infrastructure for running Claude Code agents persistently via Telegram — surviving reboots, terminal closes, and supporting full multi-turn conversations.
+Infrastructure for running Claude Code agents persistently via Telegram or Matrix — surviving reboots, terminal closes, and supporting full multi-turn conversations.
 
-> **Built on Claude Code's native `--channels` feature.** This repo is not a custom Telegram integration — it's a thin layer of systemd + tmux infrastructure on top of the [official Claude Code Telegram channel plugin](https://docs.anthropic.com/en/docs/claude-code/channels). The plugin handles all the bot logic; this repo just keeps it alive.
+> **Built on Claude Code's native `--channels` feature.** This repo is not a custom messaging integration — it's a thin layer of systemd + tmux infrastructure on top of Claude Code's official channel plugins. The plugins handle all the messaging logic; this repo just keeps them alive.
 
 ## Background: Claude Code Channels
 
-Claude Code has a first-class `--channels` feature that connects Claude to external messaging platforms via MCP plugin servers. The official Telegram plugin lets you message Claude directly from Telegram:
+Claude Code has a first-class `--channels` feature that connects Claude to external messaging platforms. Two approaches are supported:
 
+**Telegram** — via the official plugin:
 ```bash
 claude --channels plugin:telegram@claude-plugins-official
 ```
 
-This works great interactively. The problem comes when you want it to run **persistently** — in the background, surviving terminal closes, across reboots — especially with **multiple agents each on their own bot**.
+**Matrix** — via a local MCP server (the `cc_matrix_channel` Rust binary):
+```bash
+claude --dangerously-load-development-channels server:matrix
+```
+
+Both work great interactively. The problem comes when you want them to run **persistently** — in the background, surviving terminal closes, across reboots — especially with **multiple agents each on their own account**.
 
 ## The Problems This Repo Solves
 
@@ -43,9 +49,13 @@ systemd / launchd
 
 | File | Purpose |
 |------|---------|
-| `claude-tmux-launch` | Launcher: starts claude in a named tmux session, loops until it exits |
+| `claude-tmux-launch` | Launcher: starts Claude in a named tmux session, loops until it exits |
 | `claude-agent@.service` | systemd user service template (Linux) — one instance per agent |
 | `com.claude.agent.plist` | launchd plist template (macOS, **untested**) — one copy per agent |
+| `claude-notify` | Route a system notification to the right backend (Telegram or Matrix) |
+| `telegram-notify` | Send a plain-text system notification via Telegram bot |
+| `matrix-notify` | Send a plain-text system notification to the Matrix status room |
+| `matrix-log` | Log inbound/outbound Matrix messages locally (no LLM tokens consumed) |
 | `patch-telegram-plugin.sh` | One-line patch for multi-agent `TELEGRAM_STATE_DIR` support |
 | `setup-agent.sh` | Interactive helper to configure a new agent's bot token and access policy |
 
@@ -240,6 +250,134 @@ launchctl load ~/Library/LaunchAgents/com.claude.agent.my-agent.plist
 # View logs
 tail -f /tmp/claude-agent-my-agent.log
 ```
+
+## Matrix Support
+
+The launcher and service unit also support Matrix via the `cc_matrix_channel` Rust binary, which acts as an MCP server providing E2EE messaging.
+
+### How it differs from Telegram
+
+| | Telegram | Matrix |
+|---|---|---|
+| Channel flag | `--channels plugin:telegram@...` | `--dangerously-load-development-channels server:matrix` |
+| Bridge process | `bun server.ts` | `cc_matrix_channel` (Rust binary) |
+| Multi-agent isolation | `TELEGRAM_STATE_DIR` per agent | Separate Matrix account per agent |
+| Encryption | None | E2EE via Olm/Megolm |
+| MCP config | Global plugin | Project-scoped `.mcp.json` |
+
+### Setup
+
+**1. Install the binary.** Build or install `cc_matrix_channel` into `~/.local/bin/`.
+
+**2. Create a Matrix account** for the agent on your homeserver.
+
+**3. Create `.mcp.json`** in the agent's working directory (do not commit — add to `.gitignore`):
+
+```json
+{
+  "mcpServers": {
+    "matrix": {
+      "command": "cc_matrix_channel",
+      "env": {
+        "MATRIX_HOMESERVER_URL": "https://matrix.example.com",
+        "MATRIX_USER_ID": "@agent-name:example.com",
+        "MATRIX_ACCESS_TOKEN": "syt_...",
+        "MATRIX_STORE_PATH": "/home/you/.claude/channels/matrix-agent-name/rust-store",
+        "MATRIX_ALLOWED_USERS": "@you:example.com",
+        "MATRIX_PASSWORD": "...",
+        "MATRIX_MENTION_ONLY_ROOMS": "!room-id-for-group-rooms:example.com"
+      }
+    }
+  }
+}
+```
+
+> **Why `.mcp.json` and not `~/.claude.json`?** The `--dangerously-load-development-channels server:matrix` flag only discovers MCP servers from project-level `.mcp.json` files, not from the `projects[path].mcpServers` key in `~/.claude.json`.
+
+**4. Enable the Matrix channel** in the agent's state `.env`:
+
+```bash
+mkdir -p ~/.claude/channels/matrix-agent-name
+cat > ~/.claude/channels/matrix-agent-name/.env <<EOF
+MATRIX_HOMESERVER=https://matrix.example.com
+MATRIX_ACCESS_TOKEN=syt_...
+CLAUDE_CHANNEL_PLUGIN=server:matrix
+EOF
+```
+
+**5. Set up the status room.** Create `access.json` in the state directory:
+
+```json
+{
+  "rooms": ["!dm-room-id:example.com"],
+  "statusRoom": "!unencrypted-status-room-id:example.com",
+  "ackReaction": "👀"
+}
+```
+
+- `rooms` — E2EE DM rooms where the agent receives and sends messages
+- `statusRoom` — an **unencrypted** room for system notifications (startup messages, etc.) sent via `matrix-notify`
+
+**6. Enable and start** the service — same as Telegram:
+
+```bash
+systemctl --user enable --now claude-agent@agent-name
+```
+
+The launcher detects `CLAUDE_CHANNEL_PLUGIN=server:matrix` from the `.env` file and uses the correct startup flags automatically.
+
+### Local message logging
+
+`matrix-log` captures inbound and outbound Matrix messages to a local JSONL file without consuming any LLM tokens. Each entry is written by a shell hook, not by Claude.
+
+**Usage** (called automatically via Claude Code hooks):
+
+```bash
+# Outbound (PostToolUse hook, matcher: mcp__matrix__reply)
+echo '<hook json>' | matrix-log out
+
+# Inbound (UserPromptSubmit hook)
+echo '<hook json>' | matrix-log in
+```
+
+**Logs are written to:** `~/.claude/channels/matrix-{agent}/logs/YYYY-MM-DD.jsonl`
+
+**Log format:**
+
+```jsonl
+{"ts":"2026-03-24T18:04:14Z","direction":"out","agent":"hermes","room_id":"!room:server","text":"Hello"}
+{"ts":"2026-03-24T18:04:19Z","direction":"in","agent":"hermes","room_id":"!room:server","sender":"@user:server","sender_name":"Alice","event_id":"$evt","text":"Hey"}
+```
+
+**To enable**, add these hooks to `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "mcp__matrix__reply",
+      "hooks": [{
+        "type": "command",
+        "command": "case \"$PWD\" in /path/to/agents/*) /path/to/matrix-log out 2>/dev/null || true;; esac"
+      }]
+    }],
+    "UserPromptSubmit": [{
+      "hooks": [{
+        "type": "command",
+        "command": "case \"$PWD\" in /path/to/agents/*) /path/to/matrix-log in 2>/dev/null || true;; esac"
+      }]
+    }]
+  }
+}
+```
+
+The inbound hook silently exits for non-Matrix prompts (no `<channel source="matrix-channel">` tag), so it's safe to add globally.
+
+### Caveats
+
+- **Proactive sends on startup** — the Matrix MCP blocks `mcp__matrix__reply` to rooms with no prior inbound messages in the current session. This means Claude cannot proactively greet you after a restart. It will respond normally once you send the first message. (The launcher skips the tmux greeting injection for Matrix agents for this reason.)
+- **Status room must be unencrypted** — `matrix-notify` uses the plain Matrix REST API and cannot send to E2EE rooms. Keep the status room unencrypted.
+- **E2EE room sends** — outbound messages to E2EE rooms go through `cc_matrix_channel`, which handles Olm/Megolm. Sending from outside Claude (e.g. via curl) won't work for encrypted rooms.
 
 ## Troubleshooting
 

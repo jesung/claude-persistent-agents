@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+# matrix-log — log inbound/outbound Matrix messages locally (no LLM tokens)
+# Usage: matrix-log <in|out>
+# Reads hook JSON from stdin; appends to ~/.claude/channels/matrix-{agent}/logs/YYYY-MM-DD.jsonl
+
+import sys
+import os
+import json
+import re
+from datetime import datetime, timezone
+from pathlib import Path
+
+direction = sys.argv[1] if len(sys.argv) > 1 else ''
+if direction not in ('in', 'out'):
+    print('Usage: matrix-log <in|out>', file=sys.stderr)
+    sys.exit(1)
+
+agent = Path(os.getcwd()).name
+log_dir = Path.home() / '.claude' / 'channels' / f'matrix-{agent}' / 'logs'
+log_dir.mkdir(parents=True, exist_ok=True)
+
+today = datetime.now(timezone.utc).strftime('%Y-%m-%d')
+log_file = log_dir / f'{today}.jsonl'
+ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError:
+    sys.exit(0)
+
+if direction == 'out':
+    tool_input = data.get('tool_input', {})
+    room_id = tool_input.get('room_id', '')
+    text = tool_input.get('text', '')
+
+    if not text:
+        sys.exit(0)
+
+    entry = {
+        'ts': ts,
+        'direction': 'out',
+        'agent': agent,
+        'room_id': room_id,
+        'text': text,
+    }
+
+elif direction == 'in':
+    prompt = data.get('prompt', '')
+
+    if 'source="matrix-channel"' not in prompt:
+        sys.exit(0)
+
+    m = re.search(r'<channel\s([^>]*)>(.*?)</channel>', prompt, re.DOTALL)
+    if not m:
+        sys.exit(0)
+
+    attrs_str = m.group(1)
+    text = m.group(2).strip()
+
+    def attr(name):
+        a = re.search(rf'{name}="([^"]*)"', attrs_str)
+        return a.group(1) if a else ''
+
+    entry = {
+        'ts': ts,
+        'direction': 'in',
+        'agent': agent,
+        'room_id': attr('room_id'),
+        'sender': attr('sender'),
+        'sender_name': attr('sender_name'),
+        'event_id': attr('event_id'),
+        'text': text,
+    }
+
+with open(log_file, 'a', encoding='utf-8') as f:
+    f.write(json.dumps(entry, ensure_ascii=False) + '\n')
