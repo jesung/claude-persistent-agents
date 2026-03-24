@@ -94,27 +94,13 @@ fi
 
 # Inject a greeting prompt into the Claude session at 25s so Claude actively greets
 # the user through the channel — confirming the AI layer is responsive, not just the process.
-# Pre-resolve the destination (chat_id / room_id) so Claude doesn't need to search files.
 if [[ "$CHANNEL_PLUGIN" == server:matrix || "$CHANNEL_PLUGIN" == matrix@* ]]; then
-  # For Matrix, extract the first allowed room or user from the MCP config.
-  _DEST=$(python3 -c "
-import json, os
-cfg = json.load(open(os.path.expanduser('~/.claude.json')))
-env = cfg.get('mcpServers', {}).get('matrix', {}).get('env', {})
-rooms = env.get('MATRIX_MENTION_ONLY_ROOMS', '') or env.get('MATRIX_ALLOWED_USERS', '')
-print(rooms.split(',')[0].strip())
-" 2>/dev/null || echo "")
-  _GREETING_PROMPT="Send Jesung a one-sentence greeting via the matrix MCP reply tool (room_id: ${_DEST})."
+  _CHANNEL_NAME="Matrix"
 else
-  # For Telegram, read the chat_id from the access file.
-  _DEST=$(python3 -c "
-import json
-print(json.load(open('${TELEGRAM_STATE_DIR}/access.json'))['allowFrom'][0])
-" 2>/dev/null || echo "")
-  _GREETING_PROMPT="Send Jesung a one-sentence greeting via the telegram MCP reply tool (chat_id: ${_DEST})."
+  _CHANNEL_NAME="Telegram"
 fi
-( sleep 25 && tmux -L "$AGENT" send-keys -t "$SESSION" "${_GREETING_PROMPT}" Enter ) &
-unset _DEST _GREETING_PROMPT
+( sleep 25 && tmux -L "$AGENT" send-keys -t "$SESSION" "You just came back online. Your active channel is ${_CHANNEL_NAME}. Send the user a brief greeting." Enter ) &
+unset _CHANNEL_NAME
 
 # Stay alive while the session exists. When claude exits the tmux window closes,
 # the session is destroyed, this loop exits, and systemd restarts the service.
