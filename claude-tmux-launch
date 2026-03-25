@@ -11,18 +11,13 @@
 # Channel selection (set in agent .env):
 #   CLAUDE_CHANNEL_PLUGIN  — channel spec:
 #     telegram@claude-plugins-official  — Telegram (default)
-#     matrix@local                      — TypeScript Matrix plugin (bun)
 #     server:matrix                     — Rust Matrix binary (cc_matrix_channel)
 #
 # Telegram env vars (default):
 #   TELEGRAM_STATE_DIR   — per-agent state dir (~/.claude/channels/telegram-<name>)
 #   TELEGRAM_BOT_TOKEN   — bot token (auto-sourced from STATE_DIR/.env if not set)
 #
-# Matrix plugin env vars (when CLAUDE_CHANNEL_PLUGIN=matrix@local):
-#   MATRIX_STATE_DIR     — per-agent state dir (~/.claude/channels/matrix-<name>)
-#   MATRIX_ACCESS_TOKEN  — access token (auto-sourced from STATE_DIR/.env if not set)
-#
-# Matrix server env vars (when CLAUDE_CHANNEL_PLUGIN=server:matrix):
+# Matrix env vars (when CLAUDE_CHANNEL_PLUGIN=server:matrix):
 #   All Matrix config is in ~/.claude.json mcpServers.matrix.env for the project.
 #   No extra env vars needed here.
 #
@@ -40,16 +35,6 @@ if [[ "$CHANNEL_PLUGIN" == server:* ]]; then
   # Server-type channel (e.g. server:matrix): all config is in .claude.json mcpServers.
   # No special env vars needed here — just pass an empty set.
   CHANNEL_ENV=()
-elif [[ "$CHANNEL_PLUGIN" == matrix@* ]]; then
-  if [[ -z "${MATRIX_ACCESS_TOKEN:-}" && -n "${MATRIX_STATE_DIR:-}" && -f "${MATRIX_STATE_DIR}/.env" ]]; then
-    set -a; source "${MATRIX_STATE_DIR}/.env"; set +a
-  fi
-  for var in MATRIX_STATE_DIR MATRIX_ACCESS_TOKEN; do
-    if [[ -z "${!var:-}" ]]; then
-      echo "Error: ${var} is not set." >&2; exit 1
-    fi
-  done
-  CHANNEL_ENV=(-e "MATRIX_STATE_DIR=${MATRIX_STATE_DIR}" -e "MATRIX_ACCESS_TOKEN=${MATRIX_ACCESS_TOKEN}")
 else
   if [[ -z "${TELEGRAM_BOT_TOKEN:-}" && -n "${TELEGRAM_STATE_DIR:-}" && -f "${TELEGRAM_STATE_DIR}/.env" ]]; then
     set -a; source "${TELEGRAM_STATE_DIR}/.env"; set +a
@@ -103,7 +88,7 @@ unset _STARTUP_MSG
 # Skipped for Matrix agents: the MCP blocks sends to rooms with no prior inbound messages,
 # so proactive greetings fail silently. Matrix agents greet naturally on first user message.
 # (See beads ticket for plugin fix to pre-authorize rooms from access.json.)
-if [[ "$CHANNEL_PLUGIN" != server:matrix && "$CHANNEL_PLUGIN" != matrix@* ]]; then
+if [[ "$CHANNEL_PLUGIN" != server:matrix ]]; then
   ( sleep 25 && tmux -L "$AGENT" send-keys -t "$SESSION" "You just came back online. Your active channel is Telegram. Send the user a brief greeting." Enter ) &
 fi
 
@@ -112,8 +97,8 @@ fi
 #
 # Health check: the channel bridge process can die while claude stays alive, leaving
 # the bot silently unresponsive. Track which process to watch based on channel type:
-#   plugin:matrix@local  → bun (TypeScript plugin)
-#   server:matrix        → cc_matrix_channel (Rust binary, managed by Claude as MCP child)
+#   telegram@*    → bun (official Claude Code Telegram plugin)
+#   server:matrix → cc_matrix_channel (Rust binary, managed by Claude as MCP child)
 #
 # For server: channels, Claude manages the subprocess lifecycle, so we only watch
 # for prolonged absence without active tool work (same logic, different process name).
