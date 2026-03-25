@@ -11,5 +11,6 @@ Environment=CLAUDE_CHANNEL_PLUGIN=server:matrix
 Environment=MATRIX_STATE_DIR=/home/jesung/.claude/channels/matrix-hermes
 EnvironmentFile=-/home/jesung/.claude/channels/matrix-hermes/.env
 ExecStart=/home/jesung/bin/check-cc-matrix-updates
+TimeoutStartSec=3600
 StandardOutput=journal
 StandardError=journal

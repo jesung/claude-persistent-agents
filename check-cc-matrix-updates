@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # check-cc-matrix-updates — check for new releases of cc_matrix_channel,
-# build from source, install, and restart Hermes automatically.
+# run a Hephaestus security review, build from source, install, and restart Hermes.
 # Designed to be run by a systemd timer.
 
 set -euo pipefail
@@ -10,6 +10,8 @@ CACHE="$HOME/.claude/channels/cc-matrix-last-seen-tag"
 AGENT="${NOTIFY_AGENT:-hermes}"
 SRC_DIR="$HOME/.local/src/cc_matrix_channel"
 BIN_DIR="$HOME/.local/bin"
+SECURITY_REPORTS_DIR="$HOME/.local/share/cc-matrix-security"
+HEPHAESTUS_DIR="$HOME/GitHub/cc-agents/hephaestus"
 
 notify() {
     /home/jesung/bin/claude-notify "$AGENT" "$1" 2>/dev/null || true
@@ -34,7 +36,7 @@ if [[ "$LATEST" == "$LAST" ]]; then
     exit 0
 fi
 
-echo "New version detected: $LATEST — building from source..."
+echo "New version detected: $LATEST"
 
 # Clone if first time, otherwise fetch and checkout the new tag
 if [[ ! -d "$SRC_DIR/.git" ]]; then
@@ -45,7 +47,68 @@ cd "$SRC_DIR"
 git fetch --tags --force
 git checkout "$LATEST"
 
-# Build release binary
+# --- Security check by Hephaestus ---
+# Generate the diff from the last seen version to the new one.
+# On first run there is no previous tag to diff from — skip the security gate.
+if [[ -n "$LAST" ]]; then
+    echo "Running Hephaestus security check ($LAST → $LATEST)..."
+
+    DIFF=$(git diff "$LAST" "$LATEST" 2>/dev/null || git diff HEAD~1 HEAD)
+    DIFF_LINES=$(echo "$DIFF" | wc -l)
+    echo "Diff size: $DIFF_LINES lines"
+
+    PROMPT="You are Hephaestus. You are acting as an automated security gate for a third-party Rust binary (cc_matrix_channel by IA-PieroCV) that runs as an MCP server inside Claude Code agents on this machine.
+
+Your task: apply your security-check skill (skills/security-check.md) to the git diff below, which covers the changes from $LAST to $LATEST.
+
+Key context about this binary:
+- It runs as a child process of Claude Code, exposing MCP tools (mcp__matrix__reply, etc.)
+- It handles Matrix auth tokens, E2EE crypto (Olm/Megolm), inbound user messages, outbound agent replies
+- Environment variables it receives: MATRIX_ACCESS_TOKEN, MATRIX_PASSWORD, MATRIX_ALLOWED_USERS, MATRIX_STORE_PATH
+- It has network access to the Matrix homeserver
+
+Focus on: new/changed dependencies (Cargo.toml/Cargo.lock), auth and crypto code, input handling, secrets handling, any code that reads from or writes to the filesystem or network.
+
+--- DIFF ($LAST → $LATEST) ---
+$DIFF
+--- END DIFF ---
+
+End your review with EXACTLY one of these two verdict lines on its own line, with nothing after it:
+SECURITY_APPROVED
+SECURITY_BLOCKED"
+
+    REPORT_FILE=$(mktemp /tmp/cc-matrix-security-XXXXXX.md)
+
+    if claude --dangerously-skip-permissions --bare \
+        --cwd "$HEPHAESTUS_DIR" \
+        -p "$PROMPT" > "$REPORT_FILE" 2>&1; then
+        echo "Hephaestus review complete."
+    else
+        echo "Hephaestus exited non-zero — treating as inconclusive."
+    fi
+
+    # Save report regardless of verdict
+    mkdir -p "$SECURITY_REPORTS_DIR"
+    REPORT_PATH="$SECURITY_REPORTS_DIR/$(date +%Y-%m-%d)-$LATEST.md"
+    cp "$REPORT_FILE" "$REPORT_PATH"
+    rm "$REPORT_FILE"
+    echo "Security report saved: $REPORT_PATH"
+
+    if grep -q "^SECURITY_APPROVED$" "$REPORT_PATH"; then
+        echo "Security check: APPROVED — proceeding to build."
+    elif grep -q "^SECURITY_BLOCKED$" "$REPORT_PATH"; then
+        echo "Security check: BLOCKED — aborting build."
+        notify "cc_matrix_channel $LATEST BLOCKED by Hephaestus security review. Report: $REPORT_PATH"
+        exit 1
+    else
+        echo "Security check: INCONCLUSIVE (no verdict found) — aborting build."
+        notify "cc_matrix_channel $LATEST security check inconclusive — build aborted. Report: $REPORT_PATH"
+        exit 1
+    fi
+fi
+
+# --- Build ---
+echo "Building $LATEST from source..."
 if ! cargo build --release 2>&1; then
     notify "cc_matrix_channel $LATEST build FAILED — still on ${LAST:-unknown}. Check: journalctl --user -u check-cc-matrix-updates"
     exit 1
@@ -66,7 +129,7 @@ if [[ -z "$LAST" ]]; then
 fi
 
 # Notify before restarting so the message goes out while Hermes is still up
-notify "cc_matrix_channel updated $LAST → $LATEST — rebuilt from source, restarting Hermes..."
+notify "cc_matrix_channel updated $LAST → $LATEST — security approved, rebuilt from source, restarting Hermes..."
 
 # Restart Hermes to pick up the new binary
 systemctl --user restart claude-agent@hermes

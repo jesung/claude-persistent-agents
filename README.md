@@ -412,10 +412,14 @@ The build takes ~3 minutes on first run (compiling all dependencies). Subsequent
 **What happens on update:**
 1. Detects new release tag on GitHub
 2. Clones repo (or fetches latest tags) and checks out the new tag
-3. Runs `cargo build --release`
-4. Atomically replaces the binary (`mv`) — works even while the agent is running
-5. Notifies via `claude-notify` (routes to Matrix or Telegram)
-6. Restarts the agent service
+3. Generates a git diff between the previous and new version
+4. Runs a Hephaestus security review via `claude -p` — STRIDE + OWASP Top 10 + LLM/AI-specific checks on the diff
+5. If **BLOCKED**: saves the report to `~/.local/share/cc-matrix-security/`, notifies, and aborts — the old binary stays in place
+6. If **APPROVED**: runs `cargo build --release`
+7. Atomically replaces the binary (`mv`) — safe even while the agent is running
+8. Notifies via `claude-notify` and restarts the agent service
+
+Security reports are always saved to `~/.local/share/cc-matrix-security/YYYY-MM-DD-vX.X.X.md` regardless of verdict. The security gate is skipped on first run (no previous version to diff from).
 
 If the build fails, the old binary is left in place, the version cache is not updated, and a failure notification is sent.
 
