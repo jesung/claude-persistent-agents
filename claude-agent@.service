@@ -12,8 +12,7 @@ Environment=PATH=%h/.bun/bin:%h/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/s
 Environment=TELEGRAM_STATE_DIR=%h/.claude/channels/telegram-%i
 EnvironmentFile=-%h/.claude/channels/telegram-%i/.env
 
-# Matrix (active for migrated agents — set CLAUDE_CHANNEL_PLUGIN=matrix@local in agent .env)
-Environment=MATRIX_STATE_DIR=%h/.claude/channels/matrix-%i
+# Matrix (set CLAUDE_CHANNEL_PLUGIN=server:matrix in agent .env; config via .claude.json mcpServers)
 EnvironmentFile=-%h/.claude/channels/matrix-%i/.env
 
 ExecStart=%h/.local/bin/claude-tmux-launch %i

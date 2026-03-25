@@ -44,7 +44,9 @@ else
       echo "Error: ${var} is not set." >&2; exit 1
     fi
   done
-  CHANNEL_ENV=(-e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}" -e "TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}")
+  # Pass only TELEGRAM_STATE_DIR — the plugin reads the token from STATE_DIR/.env directly.
+  # Do NOT pass TELEGRAM_BOT_TOKEN via -e: it would appear in 'ps aux' output.
+  CHANNEL_ENV=(-e "TELEGRAM_STATE_DIR=${TELEGRAM_STATE_DIR}")
 fi
 
 # Kill any stale server from a previous run (per-agent socket = safe to nuke entirely).
