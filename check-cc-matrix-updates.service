@@ -1,0 +1,15 @@
+[Unit]
+Description=Check for cc_matrix_channel upstream updates
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=PATH=/home/jesung/.cargo/bin:/home/jesung/.bun/bin:/home/jesung/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NOTIFY_AGENT=hermes
+Environment=CLAUDE_CHANNEL_PLUGIN=server:matrix
+Environment=MATRIX_STATE_DIR=/home/jesung/.claude/channels/matrix-hermes
+EnvironmentFile=-/home/jesung/.claude/channels/matrix-hermes/.env
+ExecStart=/home/jesung/bin/check-cc-matrix-updates
+StandardOutput=journal
+StandardError=journal

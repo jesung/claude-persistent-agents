@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# check-cc-matrix-updates — check for new releases of cc_matrix_channel,
+# build from source, install, and restart Hermes automatically.
+# Designed to be run by a systemd timer.
+
+set -euo pipefail
+
+REPO="IA-PieroCV/cc_matrix_channel"
+CACHE="$HOME/.claude/channels/cc-matrix-last-seen-tag"
+AGENT="${NOTIFY_AGENT:-hermes}"
+SRC_DIR="$HOME/.local/src/cc_matrix_channel"
+BIN_DIR="$HOME/.local/bin"
+
+notify() {
+    /home/jesung/bin/claude-notify "$AGENT" "$1" 2>/dev/null || true
+}
+
+# Get latest release tag
+LATEST=$(gh release view --repo "$REPO" --json tagName -q '.tagName' 2>/dev/null || true)
+
+# Fall back to git ls-remote if gh fails
+if [[ -z "$LATEST" ]]; then
+    LATEST=$(git ls-remote --tags "https://github.com/$REPO" 2>/dev/null \
+        | awk '{print $2}' | grep -v '\^{}' | sed 's|refs/tags/||' | sort -V | tail -1)
+fi
+
+[[ -z "$LATEST" ]] && { echo "Could not determine latest release" >&2; exit 1; }
+
+LAST=$(cat "$CACHE" 2>/dev/null || echo "")
+echo "Latest: $LATEST  Last seen: ${LAST:-<none>}"
+
+if [[ "$LATEST" == "$LAST" ]]; then
+    echo "No update."
+    exit 0
+fi
+
+echo "New version detected: $LATEST — building from source..."
+
+# Clone if first time, otherwise fetch and checkout the new tag
+if [[ ! -d "$SRC_DIR/.git" ]]; then
+    git clone "https://github.com/$REPO" "$SRC_DIR"
+fi
+
+cd "$SRC_DIR"
+git fetch --tags --force
+git checkout "$LATEST"
+
+# Build release binary
+if ! cargo build --release 2>&1; then
+    notify "cc_matrix_channel $LATEST build FAILED — still on ${LAST:-unknown}. Check: journalctl --user -u check-cc-matrix-updates"
+    exit 1
+fi
+
+# Install — copy to .new then mv to atomically replace without "text file busy"
+cp "target/release/cc_matrix_channel" "$BIN_DIR/cc_matrix_channel.new"
+mv "$BIN_DIR/cc_matrix_channel.new" "$BIN_DIR/cc_matrix_channel"
+echo "Installed $LATEST to $BIN_DIR/cc_matrix_channel"
+
+# Update cache
+echo "$LATEST" > "$CACHE"
+
+# First run — just build and cache, no restart or notification needed
+if [[ -z "$LAST" ]]; then
+    echo "First run — built and installed $LATEST."
+    exit 0
+fi
+
+# Notify before restarting so the message goes out while Hermes is still up
+notify "cc_matrix_channel updated $LAST → $LATEST — rebuilt from source, restarting Hermes..."
+
+# Restart Hermes to pick up the new binary
+systemctl --user restart claude-agent@hermes
+echo "Hermes restarted."

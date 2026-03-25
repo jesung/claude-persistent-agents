@@ -56,6 +56,9 @@ systemd / launchd
 | `telegram-notify` | Send a plain-text system notification via Telegram bot |
 | `matrix-notify` | Send a plain-text system notification to the Matrix status room |
 | `matrix-log` | Log inbound/outbound Matrix messages locally (no LLM tokens consumed) |
+| `check-cc-matrix-updates` | Weekly update checker: builds `cc_matrix_channel` from source and restarts the agent |
+| `check-cc-matrix-updates.service` | systemd oneshot service that runs the update checker |
+| `check-cc-matrix-updates.timer` | systemd timer — triggers every Monday at 09:00 (with `Persistent=true`) |
 | `patch-telegram-plugin.sh` | One-line patch for multi-agent `TELEGRAM_STATE_DIR` support |
 | `setup-agent.sh` | Interactive helper to configure a new agent's bot token and access policy |
 
@@ -372,6 +375,49 @@ echo '<hook json>' | matrix-log in
 ```
 
 The inbound hook silently exits for non-Matrix prompts (no `<channel source="matrix-channel">` tag), so it's safe to add globally.
+
+### Automatic updates from source
+
+`check-cc-matrix-updates` polls for new `cc_matrix_channel` releases weekly, builds from source, installs the binary, and restarts the agent — no manual intervention needed.
+
+**Setup:**
+
+```bash
+# Install Rust if needed
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+
+# Install the scripts and systemd units
+cp check-cc-matrix-updates ~/bin/
+chmod +x ~/bin/check-cc-matrix-updates
+cp check-cc-matrix-updates.service check-cc-matrix-updates.timer \
+   ~/.config/systemd/user/
+
+# Edit the service to set NOTIFY_AGENT and paths, then enable
+systemctl --user daemon-reload
+systemctl --user enable --now check-cc-matrix-updates.timer
+```
+
+Run once manually to clone the repo, build the initial binary, and seed the version cache (no notification sent on first run):
+
+```bash
+CLAUDE_CHANNEL_PLUGIN=server:matrix \
+MATRIX_STATE_DIR=~/.claude/channels/matrix-<agent> \
+MATRIX_ACCESS_TOKEN=<token> \
+PATH="$HOME/.cargo/bin:$PATH" \
+~/bin/check-cc-matrix-updates
+```
+
+The build takes ~3 minutes on first run (compiling all dependencies). Subsequent runs for new versions are faster once the dependency cache is warm.
+
+**What happens on update:**
+1. Detects new release tag on GitHub
+2. Clones repo (or fetches latest tags) and checks out the new tag
+3. Runs `cargo build --release`
+4. Atomically replaces the binary (`mv`) — works even while the agent is running
+5. Notifies via `claude-notify` (routes to Matrix or Telegram)
+6. Restarts the agent service
+
+If the build fails, the old binary is left in place, the version cache is not updated, and a failure notification is sent.
 
 ### Caveats
 
