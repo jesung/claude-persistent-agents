@@ -1,20 +1,29 @@
 #!/usr/bin/env bash
 # check-cc-matrix-updates — check for new releases of cc_matrix_channel,
-# run a Hephaestus security review, build from source, install, and restart Hermes.
+# run a Claude security review on the diff, build from source, install, and restart the agent.
 # Designed to be run by a systemd timer.
+#
+# Required environment variables (set in the .service file):
+#   NOTIFY_AGENT            — agent name to route notifications through
+#   CLAUDE_CHANNEL_PLUGIN   — channel backend (e.g. server:matrix, telegram@...)
+#   MATRIX_STATE_DIR        — state dir for matrix-notify (Matrix agents only)
+#   MATRIX_ACCESS_TOKEN     — access token (Matrix agents only)
+#
+# Optional:
+#   AGENT_SERVICE           — systemd service instance to restart (default: claude-agent@$NOTIFY_AGENT)
 
 set -euo pipefail
 
 REPO="IA-PieroCV/cc_matrix_channel"
-CACHE="$HOME/.claude/channels/cc-matrix-last-seen-tag"
-AGENT="${NOTIFY_AGENT:-hermes}"
-SRC_DIR="$HOME/.local/src/cc_matrix_channel"
-BIN_DIR="$HOME/.local/bin"
-SECURITY_REPORTS_DIR="$HOME/.local/share/cc-matrix-security"
-HEPHAESTUS_DIR="$HOME/GitHub/cc-agents/hephaestus"
+CACHE="${XDG_STATE_HOME:-$HOME/.local/state}/cc-matrix-last-seen-tag"
+SRC_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/src/cc_matrix_channel"
+BIN_DIR="${HOME}/.local/bin"
+SECURITY_REPORTS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/cc-matrix-security"
+AGENT="${NOTIFY_AGENT:?NOTIFY_AGENT must be set}"
+AGENT_SERVICE="${AGENT_SERVICE:-claude-agent@${AGENT}}"
 
 notify() {
-    /home/jesung/bin/claude-notify "$AGENT" "$1" 2>/dev/null || true
+    "$(dirname "$0")/claude-notify" "$AGENT" "$1" 2>/dev/null || true
 }
 
 # Get latest release tag
@@ -28,6 +37,7 @@ fi
 
 [[ -z "$LATEST" ]] && { echo "Could not determine latest release" >&2; exit 1; }
 
+mkdir -p "$(dirname "$CACHE")"
 LAST=$(cat "$CACHE" 2>/dev/null || echo "")
 echo "Latest: $LATEST  Last seen: ${LAST:-<none>}"
 
@@ -47,62 +57,60 @@ cd "$SRC_DIR"
 git fetch --tags --force
 git checkout "$LATEST"
 
-# --- Security check by Hephaestus ---
-# Generate the diff from the last seen version to the new one.
-# On first run there is no previous tag to diff from — skip the security gate.
+# --- Security review ---
+# Diff the new release against the previous one and ask Claude to review it.
+# Skipped on first run (no previous version to diff from).
 if [[ -n "$LAST" ]]; then
-    echo "Running Hephaestus security check ($LAST → $LATEST)..."
+    echo "Running security review ($LAST → $LATEST)..."
 
     DIFF=$(git diff "$LAST" "$LATEST" 2>/dev/null || git diff HEAD~1 HEAD)
-    DIFF_LINES=$(echo "$DIFF" | wc -l)
-    echo "Diff size: $DIFF_LINES lines"
+    echo "Diff size: $(echo "$DIFF" | wc -l) lines"
 
-    PROMPT="You are Hephaestus. You are acting as an automated security gate for a third-party Rust binary (cc_matrix_channel by IA-PieroCV) that runs as an MCP server inside Claude Code agents on this machine.
+    PROMPT="You are performing an automated security review of a third-party Rust binary (cc_matrix_channel by IA-PieroCV) that will run as an MCP server inside a Claude Code agent.
 
-Your task: apply your security-check skill (skills/security-check.md) to the git diff below, which covers the changes from $LAST to $LATEST.
+Review the git diff below (${LAST} → ${LATEST}) for security issues using the following methodology:
 
-Key context about this binary:
-- It runs as a child process of Claude Code, exposing MCP tools (mcp__matrix__reply, etc.)
-- It handles Matrix auth tokens, E2EE crypto (Olm/Megolm), inbound user messages, outbound agent replies
-- Environment variables it receives: MATRIX_ACCESS_TOKEN, MATRIX_PASSWORD, MATRIX_ALLOWED_USERS, MATRIX_STORE_PATH
-- It has network access to the Matrix homeserver
+**STRIDE threat model:** Spoofing, Tampering, Repudiation, Information Disclosure, Denial of Service, Elevation of Privilege.
 
-Focus on: new/changed dependencies (Cargo.toml/Cargo.lock), auth and crypto code, input handling, secrets handling, any code that reads from or writes to the filesystem or network.
+**OWASP Top 10:** Broken Access Control, Cryptographic Failures, Injection, Insecure Design, Security Misconfiguration, Vulnerable Components, Auth Failures, Software Integrity Failures, Logging Failures, SSRF.
 
---- DIFF ($LAST → $LATEST) ---
-$DIFF
+**LLM/MCP-specific:** Prompt injection via inbound Matrix messages, tool misuse through crafted input, secrets exfiltration (the binary receives MATRIX_ACCESS_TOKEN and MATRIX_PASSWORD), context manipulation.
+
+Only flag findings at 8/10+ confidence. For each finding include: Severity, Category, Description, Exploit scenario, Recommendation.
+
+Context:
+- Binary runs as a child process of Claude Code, exposing MCP tools
+- Handles Matrix auth tokens, E2EE crypto (Olm/Megolm), inbound messages, outbound replies
+- Has network access to the Matrix homeserver
+
+--- DIFF (${LAST} → ${LATEST}) ---
+${DIFF}
 --- END DIFF ---
 
-End your review with EXACTLY one of these two verdict lines on its own line, with nothing after it:
+End your review with EXACTLY one of these verdict lines (nothing after it):
 SECURITY_APPROVED
 SECURITY_BLOCKED"
 
     REPORT_FILE=$(mktemp /tmp/cc-matrix-security-XXXXXX.md)
 
-    if claude --dangerously-skip-permissions --bare \
-        --cwd "$HEPHAESTUS_DIR" \
-        -p "$PROMPT" > "$REPORT_FILE" 2>&1; then
-        echo "Hephaestus review complete."
-    else
-        echo "Hephaestus exited non-zero — treating as inconclusive."
-    fi
+    claude --dangerously-skip-permissions --bare -p "$PROMPT" > "$REPORT_FILE" 2>&1 || true
 
     # Save report regardless of verdict
     mkdir -p "$SECURITY_REPORTS_DIR"
-    REPORT_PATH="$SECURITY_REPORTS_DIR/$(date +%Y-%m-%d)-$LATEST.md"
+    REPORT_PATH="$SECURITY_REPORTS_DIR/$(date +%Y-%m-%d)-${LATEST}.md"
     cp "$REPORT_FILE" "$REPORT_PATH"
     rm "$REPORT_FILE"
     echo "Security report saved: $REPORT_PATH"
 
     if grep -q "^SECURITY_APPROVED$" "$REPORT_PATH"; then
-        echo "Security check: APPROVED — proceeding to build."
+        echo "Security review: APPROVED — proceeding to build."
     elif grep -q "^SECURITY_BLOCKED$" "$REPORT_PATH"; then
-        echo "Security check: BLOCKED — aborting build."
-        notify "cc_matrix_channel $LATEST BLOCKED by Hephaestus security review. Report: $REPORT_PATH"
+        echo "Security review: BLOCKED — aborting build."
+        notify "cc_matrix_channel $LATEST BLOCKED by security review. Report: $REPORT_PATH"
         exit 1
     else
-        echo "Security check: INCONCLUSIVE (no verdict found) — aborting build."
-        notify "cc_matrix_channel $LATEST security check inconclusive — build aborted. Report: $REPORT_PATH"
+        echo "Security review: INCONCLUSIVE (no verdict found) — aborting build."
+        notify "cc_matrix_channel $LATEST security review inconclusive — build aborted. Report: $REPORT_PATH"
         exit 1
     fi
 fi
@@ -128,9 +136,8 @@ if [[ -z "$LAST" ]]; then
     exit 0
 fi
 
-# Notify before restarting so the message goes out while Hermes is still up
-notify "cc_matrix_channel updated $LAST → $LATEST — security approved, rebuilt from source, restarting Hermes..."
+# Notify before restarting so the message goes out while the agent is still up
+notify "cc_matrix_channel updated $LAST → $LATEST — security approved, rebuilt from source, restarting..."
 
-# Restart Hermes to pick up the new binary
-systemctl --user restart claude-agent@hermes
-echo "Hermes restarted."
+systemctl --user restart "$AGENT_SERVICE"
+echo "Restarted $AGENT_SERVICE."

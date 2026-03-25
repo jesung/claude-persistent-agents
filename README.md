@@ -348,8 +348,8 @@ echo '<hook json>' | matrix-log in
 **Log format:**
 
 ```jsonl
-{"ts":"2026-03-24T18:04:14Z","direction":"out","agent":"hermes","room_id":"!room:server","text":"Hello"}
-{"ts":"2026-03-24T18:04:19Z","direction":"in","agent":"hermes","room_id":"!room:server","sender":"@user:server","sender_name":"Alice","event_id":"$evt","text":"Hey"}
+{"ts":"2026-03-24T18:04:14Z","direction":"out","agent":"your-agent","room_id":"!room:server","text":"Hello"}
+{"ts":"2026-03-24T18:04:19Z","direction":"in","agent":"your-agent","room_id":"!room:server","sender":"@user:server","sender_name":"Alice","event_id":"$evt","text":"Hey"}
 ```
 
 **To enable**, add these hooks to `~/.claude/settings.json`:
@@ -413,7 +413,7 @@ The build takes ~3 minutes on first run (compiling all dependencies). Subsequent
 1. Detects new release tag on GitHub
 2. Clones repo (or fetches latest tags) and checks out the new tag
 3. Generates a git diff between the previous and new version
-4. Runs a Hephaestus security review via `claude -p` — STRIDE + OWASP Top 10 + LLM/AI-specific checks on the diff
+4. Runs a Claude security review via `claude -p` — STRIDE + OWASP Top 10 + LLM/AI-specific checks on the diff
 5. If **BLOCKED**: saves the report to `~/.local/share/cc-matrix-security/`, notifies, and aborts — the old binary stays in place
 6. If **APPROVED**: runs `cargo build --release`
 7. Atomically replaces the binary (`mv`) — safe even while the agent is running

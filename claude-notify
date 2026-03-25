@@ -7,11 +7,12 @@ set -euo pipefail
 AGENT="${1:?agent name required}"
 MESSAGE="${2:?message required}"
 
+DIR="$(dirname "$0")"
 case "${CLAUDE_CHANNEL_PLUGIN:-telegram@claude-plugins-official}" in
   matrix@*|server:matrix)
-    exec /home/jesung/bin/matrix-notify "$AGENT" "$MESSAGE"
+    exec "$DIR/matrix-notify" "$AGENT" "$MESSAGE"
     ;;
   *)
-    exec /home/jesung/bin/telegram-notify "$AGENT" "$MESSAGE"
+    exec "$DIR/telegram-notify" "$AGENT" "$MESSAGE"
     ;;
 esac

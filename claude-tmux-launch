@@ -90,15 +90,12 @@ fi
 
 # Agent-specific startup notification once Claude has had time to fully initialize (~20s).
 # Uses CLAUDE_CHANNEL_PLUGIN to route to the right backend (Telegram or Matrix).
+# Customize per-agent messages here, or leave the default:
 case "$AGENT" in
-  aegis)      _STARTUP_MSG="Raising the shield..." ;;
-  hermes)     _STARTUP_MSG="Wings unfurling..." ;;
-  athena)     _STARTUP_MSG="The owl stirs..." ;;
-  hephaestus) _STARTUP_MSG="Firing up the forge..." ;;
-  zeus)       _STARTUP_MSG="Thunder stirs on Olympus..." ;;
+  # my-agent)   _STARTUP_MSG="Coming online..." ;;
   *)          _STARTUP_MSG="Back online" ;;
 esac
-( sleep 20 && CLAUDE_CHANNEL_PLUGIN="${CHANNEL_PLUGIN}" /home/jesung/bin/claude-notify "$AGENT" "${_STARTUP_MSG}${CLAUDE_MODEL:+ (${CLAUDE_MODEL})}" 2>/dev/null || true ) &
+( sleep 20 && CLAUDE_CHANNEL_PLUGIN="${CHANNEL_PLUGIN}" "$(dirname "$0")/claude-notify" "$AGENT" "${_STARTUP_MSG}${CLAUDE_MODEL:+ (${CLAUDE_MODEL})}" 2>/dev/null || true ) &
 unset _STARTUP_MSG
 
 # Inject a greeting prompt into the Claude session at 25s so Claude actively greets

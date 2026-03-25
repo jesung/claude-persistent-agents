@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-Environment=PATH=/home/jesung/.cargo/bin:/home/jesung/.bun/bin:/home/jesung/.local/bin:/usr/local/bin:/usr/bin:/bin
-Environment=NOTIFY_AGENT=hermes
+Environment=PATH=%h/.cargo/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Environment=NOTIFY_AGENT=your-agent
 Environment=CLAUDE_CHANNEL_PLUGIN=server:matrix
-Environment=MATRIX_STATE_DIR=/home/jesung/.claude/channels/matrix-hermes
-EnvironmentFile=-/home/jesung/.claude/channels/matrix-hermes/.env
-ExecStart=/home/jesung/bin/check-cc-matrix-updates
+Environment=MATRIX_STATE_DIR=%h/.claude/channels/matrix-your-agent
+EnvironmentFile=-%h/.claude/channels/matrix-your-agent/.env
+ExecStart=%h/.local/bin/check-cc-matrix-updates
 TimeoutStartSec=3600
 StandardOutput=journal
 StandardError=journal
