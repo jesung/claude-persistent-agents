@@ -25,5 +25,9 @@ RestartSec=10
 StandardOutput=journal
 StandardError=journal
 
+# Memory cap — restart cleanly before system-wide OOM is triggered
+MemoryMax=2G
+MemorySwapMax=0
+
 [Install]
 WantedBy=default.target
