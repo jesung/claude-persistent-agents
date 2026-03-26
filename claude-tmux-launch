@@ -70,9 +70,26 @@ tmux -L "$AGENT" new-session -d -s "$SESSION" \
   "$CLAUDE_CMD"
 
 # server: channels show an interactive "I am using this for local development"
-# confirmation prompt on startup. Auto-confirm it after a short delay.
+# confirmation prompt on startup. Poll for the prompt and confirm when found,
+# with a 30s timeout fallback in case the prompt text ever changes.
 if [[ "$CHANNEL_PLUGIN" == server:* ]]; then
-  ( sleep 5 && tmux -L "$AGENT" send-keys -t "$SESSION" "" Enter ) &
+  (
+    START=$(date +%s)
+    while true; do
+      sleep 1
+      NOW=$(date +%s)
+      pane=$(tmux -L "$AGENT" capture-pane -t "$SESSION" -p 2>/dev/null) || break
+      if echo "$pane" | grep -q "I am using this for local development"; then
+        tmux -L "$AGENT" send-keys -t "$SESSION" "" Enter
+        break
+      fi
+      if (( NOW - START >= 30 )); then
+        echo "$(date -Iseconds) [startup] confirm timeout for ${AGENT} — sending Enter anyway" >&2
+        tmux -L "$AGENT" send-keys -t "$SESSION" "" Enter
+        break
+      fi
+    done
+  ) &
 fi
 
 # Agent-specific startup notification once Claude has had time to fully initialize (~20s).
@@ -104,7 +121,7 @@ fi
 #
 # For server: channels, Claude manages the subprocess lifecycle, so we only watch
 # for prolonged absence without active tool work (same logic, different process name).
-HEALTH_GRACE=120  # seconds to wait after launch before checking for the bridge
+HEALTH_GRACE=45  # seconds to wait after launch before checking for the bridge
 LAUNCH_TIME=$(date +%s)
 BUN_MISSING_SINCE=""
 
