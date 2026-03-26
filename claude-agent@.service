@@ -26,6 +26,9 @@ StandardOutput=journal
 StandardError=journal
 
 # Memory cap — restart cleanly before system-wide OOM is triggered
+# MemoryHigh: soft limit — kernel applies GC pressure to V8 (1.5G→2G window)
+# MemoryMax: hard kill — clean restart before system-wide OOM
+MemoryHigh=1500M
 MemoryMax=2G
 MemorySwapMax=0
 
